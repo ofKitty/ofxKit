@@ -306,9 +306,10 @@ void Runtime::registerBuiltInWindows()
 {
     if (m_builtInWindowsRegistered) return;
 
-    registerWindow({"Scene",      "View", true, true, [this](bool& visible) { drawSceneWindow(visible);      }});
-    registerWindow({"Properties", "View", true, true, [this](bool& visible) { drawPropertiesWindow(visible); }});
-    registerWindow({"Shortcuts",  "View", true, true, [this](bool& visible) { drawShortcutsWindow(visible);  }});
+    registerWindow({"Toolbar",    "View", true,  false, [this](bool& visible) { drawToolbarWindow(visible);    }});
+    registerWindow({"Scene",      "View", true,  true,  [this](bool& visible) { drawSceneWindow(visible);      }});
+    registerWindow({"Properties", "View", true,  true,  [this](bool& visible) { drawPropertiesWindow(visible); }});
+    registerWindow({"Shortcuts",  "View", true,  true,  [this](bool& visible) { drawShortcutsWindow(visible);  }});
 
     m_builtInWindowsRegistered = true;
 }
@@ -449,6 +450,89 @@ void Runtime::drawShortcutsWindow(bool& visible)
             m_shortcuts.loadBindingsFromFile(ShortcutManager::defaultBindingsPath());
         }
     }
+    ImGui::End();
+}
+
+// ============================================================================
+// Toolbar
+// ============================================================================
+
+void Runtime::registerToolbarItem(ToolbarItem item)
+{
+    if (item.id.empty()) {
+        ofLogWarning("ofxKit") << "Cannot register a toolbar item with no id.";
+        return;
+    }
+    for (const auto& existing : m_toolbarItems) {
+        if (existing.id == item.id) {
+            ofLogWarning("ofxKit") << "Toolbar item '" << item.id << "' is already registered.";
+            return;
+        }
+    }
+    m_toolbarItems.push_back(std::move(item));
+}
+
+bool Runtime::unregisterToolbarItem(const std::string& id)
+{
+    auto it = std::find_if(m_toolbarItems.begin(), m_toolbarItems.end(),
+                           [&](const ToolbarItem& t) { return t.id == id; });
+    if (it == m_toolbarItems.end()) return false;
+    m_toolbarItems.erase(it);
+    return true;
+}
+
+void Runtime::drawToolbarWindow(bool& visible)
+{
+    if (m_toolbarItems.empty()) return;
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 10, vp->WorkPos.y + 50), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // auto-size
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse
+                           | ImGuiWindowFlags_AlwaysAutoResize
+                           | ImGuiWindowFlags_NoScrollbar
+                           | ImGuiWindowFlags_NoTitleBar;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(5, 5));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(2, 2));
+
+    if (ImGui::Begin("Toolbar", &visible, flags)) {
+        const ImVec2 btnSize(32, 32);
+        const ImVec2 framePad(4, 4);
+        const ImVec4 activeCol(0.2f, 0.6f, 0.9f, 1.0f);
+
+        std::string prevGroup = "\x01"; // sentinel — not a valid group string
+
+        for (const auto& item : m_toolbarItems) {
+            // Separator between groups (only when both sides are named groups)
+            if (!item.group.empty() && item.group != prevGroup && prevGroup != "\x01") {
+                ImGui::Separator();
+            }
+            prevGroup = item.group;
+
+            bool active = item.isActive && item.isActive();
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, activeCol);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, framePad);
+
+            const char* label = (item.icon && item.icon[0] != '\0') ? item.icon : item.id.c_str();
+            ImGui::PushID(item.id.c_str());
+            bool clicked = ImGui::Button(label, btnSize);
+            ImGui::PopID();
+
+            ImGui::PopStyleVar();
+            if (active) ImGui::PopStyleColor();
+
+            if (!item.tooltip.empty() && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", item.tooltip.c_str());
+            }
+
+            if (clicked && item.onSelect) {
+                item.onSelect();
+            }
+        }
+    }
+    ImGui::PopStyleVar(2);
     ImGui::End();
 }
 

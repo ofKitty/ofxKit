@@ -150,6 +150,38 @@ public:
     Theme theme() const { return m_theme; }
 
     // -------------------------------------------------------------------------
+    // Toolbar items
+    // -------------------------------------------------------------------------
+    // A single entry in the floating Toolbar window. Tools, addons and sketches
+    // register items here so they appear as icon buttons in a shared panel.
+    //
+    // Example (with Font Awesome icons loaded):
+    //
+    //   runtime().registerToolbarItem({
+    //       "myapp.select",
+    //       ICON_FA_MOUSE_POINTER,
+    //       "Select (V)",
+    //       [&]{ return currentTool == SELECT; },   // isActive
+    //       [&]{ currentTool = SELECT; }             // onSelect
+    //   });
+    //
+    // Items are drawn top-to-bottom. Those with the same non-empty `group`
+    // string are clustered together; a separator is inserted between groups.
+    struct ToolbarItem {
+        std::string           id;          // unique id (e.g. "myaddon.pan")
+        const char*           icon;        // FA glyph literal or short text label
+        std::string           tooltip;     // shown on hover
+        std::function<bool()> isActive;    // returns true → button is highlighted
+        std::function<void()> onSelect;    // called on click
+        std::string           group;       // group name for separator clustering
+    };
+
+    void registerToolbarItem(ToolbarItem item);
+    bool unregisterToolbarItem(const std::string& id);
+    std::vector<ToolbarItem>& toolbarItems() { return m_toolbarItems; }
+    const std::vector<ToolbarItem>& toolbarItems() const { return m_toolbarItems; }
+
+    // -------------------------------------------------------------------------
     // Windows
     // -------------------------------------------------------------------------
     RuntimeWindow* registerWindow(RuntimeWindow window);
@@ -178,6 +210,7 @@ private:
     void drawSceneWindow(bool& visible);
     void drawPropertiesWindow(bool& visible);
     void drawShortcutsWindow(bool& visible);
+    void drawToolbarWindow(bool& visible);
     void ensureAppName();
     void applyUIScale();
     void loadUIScalePref();
@@ -201,6 +234,7 @@ private:
     // otherwise dereference a dangling const char*.
     std::string      m_imguiIniPath;
     std::vector<RuntimeWindow> m_windows;
+    std::vector<ToolbarItem>   m_toolbarItems;
     std::vector<std::pair<std::string, MenuBarCallback>> m_menuGroups;
     std::vector<MenuBarCallback> m_menuBarRawCallbacks;
     std::vector<PostSetupHook>  m_postSetupHooks;
