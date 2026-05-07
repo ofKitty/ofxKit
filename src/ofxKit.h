@@ -13,3 +13,4 @@
 #include "ofAppRunner.h"
 #include "Runtime.h"
 #include "ShortcutManager.h"
+#include "ProgressWindow.h"
