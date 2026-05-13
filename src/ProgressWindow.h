@@ -79,6 +79,11 @@ public:
     /// The panel is shown automatically.
     void tick(std::string label, float progress);
 
+    /// Show an animated marquee bar with no numeric progress.
+    /// Equivalent to tick(label, -1.0f). Use when the total duration is
+    /// unknown (e.g. waiting for a network response).
+    void tickIndeterminate(std::string label);
+
     /// Mark the operation as complete.
     /// The panel shows doneLabel for autoHideDelay seconds then hides itself.
     void finish(std::string doneLabel = "Done");

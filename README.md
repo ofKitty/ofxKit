@@ -168,14 +168,19 @@ Component and system registration should follow the same rule: addons opt in, `o
 The intended component API should replace closed inspector lists with registered component metadata:
 
 ```cpp
-ofkitty::runtime().registerComponent<grbl::MachineStateComponent>({
-    .name = "Machine State",
-    .inspect = [](entt::registry& registry, entt::entity entity) {
-        auto& state = registry.get<grbl::MachineStateComponent>(entity);
-        ImGui::Text("State: %s", state.label.c_str());
-    },
-});
+// minimal — has / remove generated automatically from T
+ofkitty::runtime().registerComponent<grbl::MachineStateComponent>(
+    "Machine State", "Machines");
+
+// custom add — when default emplace<T>(entity) needs extra work
+ofkitty::runtime().registerComponent<grbl::MachineStateComponent>(
+    "Machine State", "Machines",
+    [](entt::registry& r, entt::entity e) {
+        r.emplace<grbl::MachineStateComponent>(e).connect("/dev/ttyUSB0");
+    });
 ```
+
+See [`docs/component-registry.md`](docs/component-registry.md) for the full API including full-control registration, query helpers, and the built-in category list.
 
 The intended system API should let kit addons register lifecycle systems against the active registry:
 
@@ -198,14 +203,40 @@ SystemRegistry       setup/update/draw/cleanup lifecycle orchestration
 ### `ofkitty::Runtime`
 
 
-| Member                   | Description                                                           |
-| ------------------------ | --------------------------------------------------------------------- |
-| `Runtime::instance()`    | Returns the singleton                                                 |
-| `runtime()`              | Free-function shorthand for `Runtime::instance()`                     |
-| `runtime().registry()`   | The active `entt::registry` (owned by runtime or supplied by the app) |
-| `runtime().selected()`   | Currently selected entity (`entt::null` if none)                      |
-| `runtime().select(e)`    | Programmatically select an entity                                     |
-| `runtime().isEditMode()` | Whether the overlay is currently visible                              |
+| Member                                           | Description                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------------ |
+| `Runtime::instance()`                            | Returns the singleton                                                    |
+| `runtime()`                                      | Free-function shorthand for `Runtime::instance()`                        |
+| `runtime().registry()`                           | The active `entt::registry` (owned by runtime or supplied by the app)    |
+| `runtime().selected()`                           | Currently selected entity (`entt::null` if none)                         |
+| `runtime().select(e)`                            | Programmatically select an entity                                        |
+| `runtime().isEditMode()`                         | Whether the overlay is currently visible                                 |
+| `runtime().toggleEditMode()`                     | Toggle Edit mode on/off                                                  |
+| `runtime().setAppName(name)`                     | Sets the name shown in the menu bar and status bar                       |
+| `runtime().registerWindow(w)`                    | Register a dockable UI panel (appears in the View menu)                  |
+| `runtime().addMenuBarGroup(name, cb)`            | Add a top-level menu group to the main menu bar                          |
+| `runtime().registerComponent<T>(name, cat)`      | Register a component type in the Add Component picker (template form)    |
+| `runtime().registerComponent(desc)`              | Register a component with explicit has/add/remove lambdas                |
+| `runtime().componentDescriptors()`               | All registered `ComponentDescriptor` entries in registration order       |
+| `runtime().componentCategories()`               | Unique category names in registration order                              |
+| `runtime().showRulers()`                         | Whether pixel rulers are visible                                         |
+| `runtime().setShowRulers(bool)`                  | Show/hide the pixel ruler overlay                                        |
+| `runtime().toggleRulers()`                       | Toggle ruler visibility (also bound to F2)                               |
+| `runtime().setViewportRenderer(fn)`              | Register the scene-draw callback for the secondary Viewport panel        |
+| `runtime().clearViewportRenderer()`              | Remove the viewport renderer (panel shows a placeholder)                 |
+| `runtime().registerPreferencePage(page)`         | Add a page to the Preferences window (built-ins + addon pages)           |
+| `runtime().unregisterPreferencePage(id)`         | Remove a preference page by id                                           |
+| `runtime().registerStatusItem(item)`             | Push an item into the status bar (compact draw callback)                 |
+| `runtime().unregisterStatusItem(id)`             | Remove a status bar item by id                                           |
+| `runtime().openFileDialog(key,title,flt,cb)`     | Open a file-open dialog; `cb` fires with the chosen path on confirm      |
+| `runtime().saveFileDialog(key,title,flt,fn,cb)`  | Open a file-save dialog; `cb` fires with the chosen path on confirm      |
+| `runtime().setSceneCamera(cam)`                  | Provide the main-scene camera so the gizmo can be drawn on it            |
+| `runtime().clearSceneCamera()`                   | Remove the scene camera reference                                        |
+| `runtime().setGizmoOperation(op)`                | Set gizmo mode: Translate / Rotate / Scale / Universal (W/E/R shortcuts) |
+| `runtime().setGizmoMode(mode)`                   | Set gizmo space: World / Local (X shortcut)                              |
+| `runtime().codeEditorSetText(src)`               | Seed the Code Editor with a source string                                |
+| `runtime().codeEditorGetText()`                  | Read back the current Code Editor contents                               |
+| `runtime().codeEditorSetLanguage(lang)`          | Set syntax-highlighting language (GLSL, C++, Lua, Python, …)            |
 
 
 ### `ofkitty::Runtime::attach(window, app)`
@@ -264,6 +295,27 @@ In the ofKitty distribution, install/update these dependencies with:
 | ------ | ------------------------ |
 | Cmd-E  | Toggle Edit mode overlay |
 | Ctrl-E | Toggle Edit mode overlay |
+| F2     | Toggle Rulers            |
+| TAB    | Toggle Edit mode (alias registered by `example-ofKitty`; add it in your own `setup()` if you want it) |
+| W      | Gizmo: Translate (while in Edit mode) |
+| E      | Gizmo: Rotate (while in Edit mode)    |
+| R      | Gizmo: Scale (while in Edit mode)     |
+| X      | Gizmo: Toggle World / Local space     |
+
+
+---
+
+## Docs
+
+| File                                                          | Topic                                              |
+|---------------------------------------------------------------|----------------------------------------------------|
+| [`docs/component-registry.md`](docs/component-registry.md)   | ComponentRegistry API, addon registration, picker  |
+| [`docs/scene-window.md`](docs/scene-window.md)               | Scene hierarchy tree, ofxNode traversal, selection |
+| [`docs/status-bar.md`](docs/status-bar.md)                   | Status bar layout and implementation notes         |
+| [`docs/preferences.md`](docs/preferences.md)                 | App Preferences window — all OF settings           |
+| [`docs/rulers.md`](docs/rulers.md)                           | Rulers overlay — pixel coordinates + mouse tracking|
+| [`docs/viewport-window.md`](docs/viewport-window.md)         | Secondary Viewport panel — FBO, camera controls   |
+| [`docs/tools.md`](docs/tools.md)                             | File dialog, Gizmo, Code Editor, Path Editor       |
 
 
 ---

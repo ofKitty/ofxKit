@@ -99,8 +99,15 @@ void ProgressWindow::tick(std::string label, float prog)
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_active) return;
 
-    m_label    = std::move(label);
-    m_progress = std::max(0.f, std::min(prog, 1.f));
+    m_label = std::move(label);
+    // Negative values are forwarded as-is to ImGui::ProgressBar, which renders
+    // them as an animated marquee (indeterminate). Positive values are clamped.
+    m_progress = (prog < 0.f) ? -1.f : std::min(prog, 1.f);
+}
+
+void ProgressWindow::tickIndeterminate(std::string label)
+{
+    tick(std::move(label), -1.f);
 }
 
 void ProgressWindow::finish(std::string doneLabel)
@@ -211,7 +218,7 @@ void ProgressWindow::draw(bool& visible)
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoNav
                            | ImGuiWindowFlags_NoCollapse
-                           | ImGuiWindowFlags_NoBringToDisplayFront
+                           | ImGuiWindowFlags_NoBringToFrontOnFocus
                            | ImGuiWindowFlags_NoSavedSettings
                            | ImGuiWindowFlags_NoFocusOnAppearing;
 

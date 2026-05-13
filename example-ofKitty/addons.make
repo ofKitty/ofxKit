@@ -1,0 +1,11 @@
+ofxAssimpModelLoader
+ofxEnTT
+ofxEnTTKit
+ofxImGui
+ofxImGuiFileDialog
+ofxImGuiStyle
+ofxImGuiTextEdit
+ofxImGuiVectorEditor
+ofxImGuizmo
+ofxEnTTInspector
+ofxKit

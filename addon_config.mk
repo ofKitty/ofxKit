@@ -6,7 +6,7 @@ meta:
 	ADDON_URL = https://github.com/ofkitty/ofxKit
 
 common:
-	ADDON_DEPENDENCIES = ofxEnTTKit ofxEnTTInspector ofxImGui
+	ADDON_DEPENDENCIES = ofxEnTTKit ofxEnTTInspector ofxImGui ofxImGuiStyle ofxImGuiTextEdit ofxImGuiFileDialog ofxImGuiVectorEditor ofxImGuizmo
 
 	# $(OF_ROOT)/addons needed so cross-addon includes resolve correctly.
 	ADDON_INCLUDES += $(OF_ROOT)/addons
@@ -21,3 +21,10 @@ android/armeabi-v7a:
 osx:
 ios:
 tvos:
+emscripten:
+	# ofxKit is Emscripten-compatible without additional flags.
+	# ofxImGuiConstants.h auto-detects __EMSCRIPTEN__ → GLES3 + GLFW backend.
+	# ImGui multi-viewports are automatically disabled under TARGET_OPENGLES.
+	# GLFW is available in Emscripten (emscripten-glfw3 layer).
+	# File I/O uses Emscripten's virtual FS; add IDBFS mounting in main.cpp
+	# if you need preferences/shortcuts to persist across page reloads.
