@@ -7,7 +7,6 @@
 #include <ofxImGuiStyle/src/ofxImGuiStyle.h>
 #include <ofxImGuiFileDialog/src/ofxImGuiFileDialog.h>
 #include <ofxImGuiTextEdit/src/ofxImGuiTextEdit.h>
-#include <ofxImGuiVectorEditor/src/ofxImGuiVectorEditor.h>
 #include <ofxImGuizmo/src/ofxImGuizmo.h>
 #include <entt.hpp>
 #include <functional>
@@ -17,6 +16,9 @@
 #include <vector>
 
 namespace ofkitty {
+
+class CodeEditorPanel;
+class PathEditorPanel;
 
 // ============================================================================
 // Runtime — ofKitty edit-mode singleton
@@ -542,7 +544,6 @@ private:
     void drawPreferencePageList();
     void drawPreferencePageContent();
     void registerBuiltInStatusItems();
-    void drawStatusBarPreferences();
 
     // Preference sub-pages
     void drawPrefsAppearance();
@@ -631,15 +632,9 @@ private:
     glm::mat4          m_capturedProj       {1.f};
     bool               m_sceneViewCaptured  {false};
 
-    // Code Editor
-    TextEditor      m_textEditor;
-    std::string     m_textEditorFilePath;
-
-    // Path Editor (ImVectorEditor)
-    ImVectorEditor::Editor m_pathEditorWidget;
-    ImVectorEditor::Path   m_pathEditorPath;
-    ImVectorEditor::Config m_pathEditorConfig;
-    entt::entity           m_pathEditorEntity {entt::null};
+    // Editors (implementations under `src/panels/`)
+    std::unique_ptr<CodeEditorPanel> m_codeEditor;
+    std::unique_ptr<PathEditorPanel> m_pathEditor;
 
     ofxImGui::GuiEventHelper m_eventHelper;
 };

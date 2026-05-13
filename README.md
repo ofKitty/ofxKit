@@ -15,6 +15,10 @@ Press **Cmd-E** at runtime to toggle the overlay (`Ctrl-E` is also registered as
 - Provides a live ImGui inspector overlay (powered by `ofxEnTTInspector`) in Edit Mode
 - Exposes entity selection state (`ofkitty::runtime().selected()`)
 
+### Registered ImGui windows
+
+Sketches register dockable Inspector panels via `Runtime::registerWindow` — either with a **lambda** or (when the window-class headers are present in your ofxKit checkout) by subclassing **`KitRegisteredWindow`**, the same typed shape as **ofxBapp**’s **`bapp::baseWindow`**. See **[docs/windows.md](docs/windows.md)** for lambdas, **`KitPropertyBag`** / **baseProp** parity, and the optional **ofxBapp** bridge include.
+
 ---
 
 ## How attach works

@@ -13,10 +13,10 @@
   "targetFps": 60,
   "vsync": true,
   "windowVisibility": {
-    "ofxkit.window.code_editor": true,
+    "ofxkit.window.code_editor": false,
     "ofxkit.window.path_editor": false,
     "ofxkit.window.preferences": false,
-    "ofxkit.window.properties": false,
+    "ofxkit.window.properties": true,
     "ofxkit.window.scene": false,
     "ofxkit.window.scene_view": true,
     "ofxkit.window.shortcuts": false,
