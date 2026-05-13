@@ -4,7 +4,6 @@
 #include "ofFileUtils.h"
 #include "ofJson.h"
 #include "ofLog.h"
-#include "ofUtils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -13,6 +12,56 @@
 namespace ofkitty {
 
 namespace {
+
+/// GLFW / Windows often deliver Ctrl+A..Z as ASCII SOH..SUB (1–26) in `ofKeyEventArgs::key`.
+bool shortcutKeyMatches(int eventKey, int boundKey)
+{
+    if (eventKey == boundKey) {
+        return true;
+    }
+    if (boundKey >= 'A' && boundKey <= 'Z') {
+        const int lower = boundKey + ('a' - 'A');
+        if (eventKey == lower) {
+            return true;
+        }
+    }
+    if (boundKey >= 'a' && boundKey <= 'z') {
+        const int upper = boundKey - ('a' - 'A');
+        if (eventKey == upper) {
+            return true;
+        }
+    }
+    if (boundKey >= 'a' && boundKey <= 'z') {
+        const int ctrlCode = boundKey - 'a' + 1;
+        if (eventKey == ctrlCode) {
+            return true;
+        }
+    }
+    if (boundKey >= 'A' && boundKey <= 'Z') {
+        const int ctrlCode = boundKey - 'A' + 1;
+        if (eventKey == ctrlCode) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool modifiersMatchShortcut(int heldMods, int requiredMods)
+{
+    if ((requiredMods & OF_KEY_CONTROL) && !(heldMods & OF_KEY_CONTROL)) {
+        return false;
+    }
+    if ((requiredMods & OF_KEY_SHIFT) && !(heldMods & OF_KEY_SHIFT)) {
+        return false;
+    }
+    if ((requiredMods & OF_KEY_ALT) && !(heldMods & OF_KEY_ALT)) {
+        return false;
+    }
+    if ((requiredMods & OF_KEY_COMMAND) && !(heldMods & OF_KEY_COMMAND)) {
+        return false;
+    }
+    return true;
+}
 
 bool isStandaloneModifierKey(int key)
 {
@@ -110,7 +159,9 @@ bool ShortcutManager::dispatch(int key)
 {
     bool fired = false;
     for (auto& s : m_shortcuts) {
-        if (s.key != key) continue;
+        if (!shortcutKeyMatches(key, s.key)) {
+            continue;
+        }
 
         bool ok = true;
         if ((s.modifiers & OF_KEY_CONTROL) && !ofGetKeyPressed(OF_KEY_CONTROL)) ok = false;
@@ -122,6 +173,35 @@ bool ShortcutManager::dispatch(int key)
             s.action();
             fired = true;
         }
+    }
+    return fired;
+}
+
+bool ShortcutManager::dispatch(const ofKeyEventArgs& e)
+{
+    if (e.type != ofKeyEventArgs::Pressed) {
+        return false;
+    }
+    // GLFW sends auto-repeat as Pressed + isRepeat; otherwise toggles (e.g. Edit mode)
+    // fire every repeat tick while the keys are held.
+    if (e.isRepeat) {
+        return false;
+    }
+
+    const int held = e.modifiers != 0
+        ? e.modifiers
+        : modifiersFromKeyboard();
+
+    bool fired = false;
+    for (auto& s : m_shortcuts) {
+        if (!shortcutKeyMatches(e.key, s.key)) {
+            continue;
+        }
+        if (!modifiersMatchShortcut(held, s.modifiers)) {
+            continue;
+        }
+        s.action();
+        fired = true;
     }
     return fired;
 }

@@ -163,9 +163,9 @@ void ofApp::setup() {
 
 ### Components and systems
 
-Component and system registration should follow the same rule: addons opt in, `ofxKit` orchestrates, and core addons do not gain UI/runtime dependencies by accident.
+Built-in **“+ Add Component”** picker rows for shipped **`ecs::*`** types come from **ofxEnTTKit** (`ecs::registerKitComponentMenu`), which `ofxKit` forwards into `runtime().registerComponent(...)` at startup. Component **property** panels stay type-driven via **ofxEnTTInspector**.
 
-The intended component API should replace closed inspector lists with registered component metadata:
+Addons extend the picker by registering their own types:
 
 ```cpp
 // minimal — has / remove generated automatically from T

@@ -58,6 +58,10 @@ public:
     /// Dispatch a key event. Returns true if at least one shortcut fired.
     bool dispatch(int key);
 
+    /// Prefer this overload: uses event modifiers and resolves Ctrl+letter codes
+    /// (Windows/GLFW often reports \x01–\x1A instead of 'a'–'z').
+    bool dispatch(const ofKeyEventArgs& e);
+
     const std::vector<Shortcut>& all() const { return m_shortcuts; }
 
     /// Human-readable combo, e.g. "Ctrl-Shift-S"

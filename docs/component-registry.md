@@ -6,7 +6,13 @@
 
 ## How it works
 
-When `ofxKit` initialises it calls `registerBuiltInComponents()`, which pre-populates the registry with every `ofxEnTTKit` component type (~50 entries, 10 categories). Each entry carries:
+**This is not EnTT “type registration”.** EnTT does not require components to be signed up anywhere; `registry.emplace<T>(e)` works on its own. The ComponentRegistry is only for **editor UI** (the **“+ Add Component”** picker and its `has` / `add` / `remove` hooks).
+
+When `ofxKit` starts, `Runtime::registerBuiltInComponents()` calls **`ecs::registerKitComponentMenu(...)`** from **ofxEnTTKit** (`component_editor_registration.cpp`). That function walks every **shipped** `ecs::*` component type and invokes a callback once per row. The callback wraps each payload in `Runtime::ComponentDescriptor` and stores it in the runtime — the same shape you get from `registerComponent(...)`.
+
+Types and default add behaviour (e.g. mesh → box primitive + `rebuild()`, surface → wave + `rebuild()`) live **next to ofxEnTTKit’s components** so the picker stays in sync when kit types change. Addons still extend the picker by calling `ofkitty::runtime().registerComponent<YourType>(...)` from `setup()` or a kit-init helper.
+
+Each stored descriptor carries:
 
 | Field         | Purpose                                                        |
 |---------------|----------------------------------------------------------------|
@@ -16,6 +22,21 @@ When `ofxKit` initialises it calls `registerBuiltInComponents()`, which pre-popu
 | `has`         | `bool(registry, entity)` — is the component already attached? |
 | `add`         | `void(registry, entity)` — attach / initialise the component  |
 | `remove`      | `void(registry, entity)` — detach the component               |
+
+### ofxEnTTKit API (for non–ofxKit shells)
+
+If you build a different editor shell, you can reuse the same rows without `ofxKit`:
+
+```cpp
+#include "ofxEnTTKit.h"   // pulls in ecs::registerKitComponentMenu
+
+ecs::registerKitComponentMenu([&](const ecs::ComponentMenuEntry& row) {
+    // Forward `row.name`, `row.category`, `row.has`, `row.add`, `row.remove`
+    // into your own picker / command list.
+});
+```
+
+`ComponentMenuEntry` is the same logical data `ofxKit` maps into `ComponentDescriptor`.
 
 ---
 

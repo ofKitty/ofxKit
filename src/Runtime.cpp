@@ -1,5 +1,7 @@
 #include "Runtime.h"
+#include "ProgressWindow.h"
 
+#include <ofxEnTTKit/src/component_editor_registration.h>
 #include <ofxEnTTInspector/src/ofxEnTTInspector.h>
 #include "ofJson.h"
 #include "imgui_internal.h"   // DockBuilder API
@@ -102,6 +104,7 @@ void Runtime::onSetup(ofEventArgs&)
     registerBuiltInComponents();
     registerBuiltInPreferencePages();
     registerBuiltInStatusItems();
+    ProgressWindow::instance().attachStatusBarItem();
     loadAppPrefs();
 
     // F2 to toggle rulers
@@ -204,6 +207,18 @@ void Runtime::onExit(ofEventArgs&)
     saveAppPrefs();
 }
 
+void Runtime::toggleEditMode()
+{
+    const int f = ofGetFrameNum();
+    if (m_toggleEditLastFrame == f) {
+        return;
+    }
+    m_toggleEditLastFrame = f;
+
+    m_editMode = !m_editMode;
+    ofLogNotice("ofxKit") << "Edit mode " << (m_editMode ? "ON" : "OFF");
+}
+
 void Runtime::onDraw(ofEventArgs&)
 {
     if (m_windows.empty()) return;
@@ -223,7 +238,7 @@ void Runtime::onKeyPressed(ofKeyEventArgs& e)
         m_skipShortcutDispatch = false;
         return;
     }
-    m_shortcuts.dispatch(e.key);
+    m_shortcuts.dispatch(e);
 }
 
 // ============================================================================
@@ -234,19 +249,24 @@ void Runtime::drawOverlay()
 {
     m_gui.begin();
 
-    // Menu bar and dockspace are only present while in Edit mode so that
-    // TAB / Cmd-E truly toggles the entire overlay on and off.
-    if (m_editMode) {
-        // ImGuizmo requires BeginFrame once per ImGui frame before any
-        // Manipulate/ViewManipulate calls.
-        ImGuizmo::BeginFrame();
+    // Ctrl/Cmd+E is handled only by ShortcutManager (`ofkitty.toggle_edit` in postSetup).
+    // Do not also read ImGui keys here: OF dispatches the key on one frame and ImGui can
+    // report ImGuiKey_E on the next, which double-toggles and makes Edit mode flicker OFF/ON.
 
+    if (m_editMode) {
+        ImGuizmo::BeginFrame();
         renderMainMenuBar();
+    }
+
+    // Always reserve the bottom status strip (progress, optional hints, FPS when visible, …).
+    drawStatusBar();
+
+    if (m_editMode) {
 
         // Status bar must claim its work-area slice BEFORE DockSpaceOverViewport
         // runs — otherwise the dockspace fills over the bar and PassthruCentralNode
         // no longer leaves a visible gap at the bottom.
-        drawStatusBar();
+        // (drawStatusBar is invoked just above.)
 
         // Use the standard DockSpaceOverViewport so PassthruCentralNode works
         // correctly (transparent + input pass-through in the empty central area).
@@ -332,11 +352,11 @@ void Runtime::renderMainMenuBar()
 
         if (ImGui::BeginMenu(m_appName.c_str())) {
             if (m_editMode) {
-                if (ImGui::MenuItem("Hide Edit Mode", "Cmd+E")) {
+                if (ImGui::MenuItem("Hide Edit Mode", "Ctrl/Cmd+E")) {
                     setEditMode(false);
                 }
             } else {
-                if (ImGui::MenuItem("Show Edit Mode", "Cmd+E")) {
+                if (ImGui::MenuItem("Show Edit Mode", "Ctrl/Cmd+E")) {
                     setEditMode(true);
                 }
             }
@@ -487,6 +507,16 @@ bool Runtime::setWindowVisible(const std::string& name, bool visible)
         return true;
     }
     return false;
+}
+
+void Runtime::addDefaultLayoutLeftDock(std::string imguiWindowTitle)
+{
+    if (imguiWindowTitle.empty()) return;
+    for (const auto& existing : m_defaultLayoutExtraLeftDocks) {
+        if (existing == imguiWindowTitle)
+            return;
+    }
+    m_defaultLayoutExtraLeftDocks.push_back(std::move(imguiWindowTitle));
 }
 
 void Runtime::registerBuiltInWindows()
@@ -1075,7 +1105,7 @@ std::vector<std::string> Runtime::componentCategories() const
 }
 
 // ============================================================================
-// Built-in component registrations  (all ofxEnTTKit component types)
+// Built-in component registrations (ofxEnTTKit — ecs::registerKitComponentMenu)
 // ============================================================================
 
 void Runtime::registerBuiltInComponents()
@@ -1083,96 +1113,16 @@ void Runtime::registerBuiltInComponents()
     if (m_builtInComponentsRegistered) return;
     m_builtInComponentsRegistered = true;
 
-    // ── Transform ────────────────────────────────────────────────────────────
-    registerComponent<ecs::node_component>     ("Node",        "Transform");
-    registerComponent<ecs::tag_component>      ("Tag",         "Transform");
-    registerComponent<ecs::selectable_component>("Selectable", "Transform");
-    registerComponent<ecs::filepath_component>  ("File Path",  "Transform");
-
-    // ── 3D ───────────────────────────────────────────────────────────────────
-    registerComponent<ecs::mesh_component>("Mesh", "3D",
-        [](entt::registry& r, entt::entity e) {
-            auto& m = r.emplace_or_replace<ecs::mesh_component>(e);
-            m.primitiveType = ecs::MESH_BOX;
-            m.rebuild();
-        });
-    registerComponent<ecs::render_component>          ("Render",         "3D");
-    registerComponent<ecs::light_component>           ("Light",          "3D");
-    registerComponent<ecs::material_component>        ("Material",       "3D");
-    registerComponent<ecs::shader_component>          ("Shader",         "3D");
-    registerComponent<ecs::primitive_component>       ("Primitive",      "3D");
-    registerComponent<ecs::billboard_component>       ("Billboard",      "3D");
-    registerComponent<ecs::trail_component>           ("Trail",          "3D");
-    registerComponent<ecs::tube_component>            ("Tube",           "3D");
-    registerComponent<ecs::surface_component>("Surface", "3D",
-        [](entt::registry& r, entt::entity e) {
-            auto& s = r.emplace_or_replace<ecs::surface_component>(e);
-            s.generateWave();
-            s.rebuild();
-        });
-    registerComponent<ecs::instanced_mesh_component> ("Instanced Mesh", "3D");
-    registerComponent<ecs::cubemap_component>         ("Cubemap",        "3D");
-    registerComponent<ecs::texture_component>         ("Texture",        "3D");
-    registerComponent<ecs::outline_component>         ("Outline",        "3D");
-    registerComponent<ecs::glow_component>            ("Glow",           "3D");
-    registerComponent<ecs::shadow_component>          ("Shadow",         "3D");
-
-    // ── 2D ───────────────────────────────────────────────────────────────────
-    registerComponent<ecs::shape2d_component>         ("Shape 2D",       "2D");
-    registerComponent<ecs::circle_component>          ("Circle",         "2D");
-    registerComponent<ecs::rectangle_component>       ("Rectangle",      "2D");
-    registerComponent<ecs::ellipse_component>         ("Ellipse",        "2D");
-    registerComponent<ecs::line_component>            ("Line",           "2D");
-    registerComponent<ecs::triangle_component>        ("Triangle",       "2D");
-    registerComponent<ecs::polygon_component>         ("Polygon",        "2D");
-    registerComponent<ecs::arc_component>             ("Arc",            "2D");
-    registerComponent<ecs::bezier_curve_component>    ("Bezier",         "2D");
-    registerComponent<ecs::spline_component>          ("Spline",         "2D");
-    registerComponent<ecs::path_component>            ("Path",           "2D");
-    registerComponent<ecs::polyline_component>        ("Polyline",       "2D");
-    registerComponent<ecs::text_2d_component>         ("Text",           "2D");
-    registerComponent<ecs::sprite_component>          ("Sprite",         "2D");
-    registerComponent<ecs::gradient_component>        ("Gradient",       "2D");
-
-    // ── Rendering ─────────────────────────────────────────────────────────────
-    registerComponent<ecs::postfx_component>          ("Post FX",        "Rendering");
-    registerComponent<ecs::canvas_effects_component>  ("Canvas FX",      "Rendering");
-
-    // ── Media ─────────────────────────────────────────────────────────────────
-    registerComponent<ecs::image_component>           ("Image",          "Media");
-    registerComponent<ecs::video_component>           ("Video",          "Media");
-    registerComponent<ecs::fbo_component>             ("FBO",            "Media");
-    registerComponent<ecs::fbo_reference_component>   ("FBO Reference",  "Media");
-
-    // ── Camera ────────────────────────────────────────────────────────────────
-    registerComponent<ecs::camera_component>          ("Camera",         "Camera");
-
-    // ── Scene ─────────────────────────────────────────────────────────────────
-    registerComponent<ecs::skybox_component>          ("Skybox",         "3D");
-
-    // ── Physics ────────────────────────────────────────────────────────────────
-    registerComponent<ecs::rigidbody_component>       ("Rigidbody",      "Physics");
-
-    // ── Audio ─────────────────────────────────────────────────────────────────
-    registerComponent<ecs::audio_component>           ("Audio",          "Media");
-
-    // ── Animation ─────────────────────────────────────────────────────────────
-    registerComponent<ecs::tween_component>            ("Tween",         "Animation");
-    registerComponent<ecs::particle_emitter_component> ("Particles",     "Animation");
-
-    // ── Modulation ────────────────────────────────────────────────────────────
-    registerComponent<ecs::modulator_component>        ("Modulator",     "Modulation");
-    registerComponent<ecs::mod_binding_component>      ("Mod Binding",   "Modulation");
-
-    // ── Color ─────────────────────────────────────────────────────────────────
-    registerComponent<ecs::swatch_library_component>   ("Color Swatches","Color");
-    registerComponent<ecs::color_gradient_component>   ("Color Gradient","Color");
-
-    // ── Hardware ──────────────────────────────────────────────────────────────
-    registerComponent<ecs::serial_component>           ("Serial",        "Hardware");
-    registerComponent<ecs::osc_component>              ("OSC",           "Hardware");
-    registerComponent<ecs::audio_source_component>     ("Audio Source",  "Hardware");
-    registerComponent<ecs::midi_source_component>      ("MIDI",          "Hardware");
+    ecs::registerKitComponentMenu([this](const ecs::ComponentMenuEntry& row) {
+        ComponentDescriptor d;
+        d.name        = row.name;
+        d.category    = row.category;
+        d.description = row.description;
+        d.has         = row.has;
+        d.add         = row.add;
+        d.remove      = row.remove;
+        registerComponent(std::move(d));
+    });
 }
 
 // ============================================================================
@@ -1490,7 +1440,11 @@ void Runtime::registerBuiltInStatusItems()
     m_builtInStatusItemsRegistered = true;
 
     registerStatusItem({"ofxkit.status.editmode", "ofxkit", true, [this]{
-        ImGui::TextColored({0.39f, 0.90f, 0.50f, 1.f}, "Edit Mode");
+        if (m_editMode) {
+            ImGui::TextColored({0.39f, 0.90f, 0.50f, 1.f}, "Edit Mode");
+        } else {
+            ImGui::TextDisabled("Edit off  (Ctrl+E)");
+        }
     }});
     registerStatusItem({"ofxkit.status.appname", "ofxkit", true, [this]{
         ImGui::TextDisabled("%s", m_appName.c_str());
@@ -1823,6 +1777,10 @@ void Runtime::buildDefaultDockLayout(ImGuiID dockId)
     ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.28f, &right, &centre);
 
     ImGui::DockBuilderDockWindow("Scene###ofxkit.window.scene",           left);
+    for (const auto& name : m_defaultLayoutExtraLeftDocks) {
+        if (!name.empty())
+            ImGui::DockBuilderDockWindow(name.c_str(), left);
+    }
     ImGui::DockBuilderDockWindow("Properties###ofxkit.window.properties", right);
     // Shortcuts and Preferences start hidden; dock them to the right panel so
     // they appear there if the user enables them.

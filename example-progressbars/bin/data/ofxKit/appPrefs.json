@@ -13,13 +13,14 @@
   "targetFps": 60,
   "vsync": true,
   "windowVisibility": {
+    "ofxkit.example_progressbars.test_loaders": true,
     "ofxkit.window.code_editor": false,
+    "ofxkit.window.ofkprogress": false,
     "ofxkit.window.path_editor": false,
     "ofxkit.window.preferences": false,
-    "ofxkit.window.progress_demos": true,
     "ofxkit.window.properties": true,
-    "ofxkit.window.scene": true,
+    "ofxkit.window.scene": false,
     "ofxkit.window.shortcuts": false,
-    "ofxkit.window.toolbar": true
+    "ofxkit.window.toolbar": false
   }
 }

@@ -1,45 +1,69 @@
 #include "ofApp.h"
+#include <cmath>
 
-// ============================================================================
-//  example-progressbars
-//
-//  Buttons in the "Progress Demos" panel trigger simulated operations.
-//  The ProgressWindow draws at the bottom of the screen (or floating if you
-//  toggle the checkbox) and auto-hides after the configured delay.
-// ============================================================================
+namespace {
+
+/// ImGui window title + ###id (must match `registerWindow` id below for docking / layout).
+constexpr const char* kProgressTestWindowImGuiTitle = "Test window###ofxkit.example_progressbars.test_loaders";
+
+} // namespace
+
+float ofApp::canvasProgressFraction() const
+{
+    switch (m_activeDemo) {
+
+    case Demo::StepBased:
+        return m_stepTotal > 0
+            ? ofClamp(static_cast<float>(m_stepCurrent) / static_cast<float>(m_stepTotal), 0.f, 1.f)
+            : 0.f;
+
+    case Demo::Absolute:
+        return ofClamp(m_absolutePos, 0.f, 1.f);
+
+    case Demo::Indeterminate:
+        return 0.5f + 0.5f * std::sin(ofGetElapsedTimef() * 3.1f);
+
+    case Demo::None:
+    default:
+        return -1.f;
+    }
+}
 
 void ofApp::setup()
 {
-    ofBackground(40, 42, 54);
+    ofBackground(26, 28, 38);
     ofSetWindowTitle("ofxKit — Progress Window Demo");
 
-    ofkitty::progress().setBottomAnchored(m_bottomAnchored);
+    ofkitty::progress().registerWithRuntime();
+    ofkitty::progress().setUseStatusBar(m_useStatusBar);
     ofkitty::progress().setAutoHideDelay(m_autoHideDelay);
 
-    // Register the demo control panel with the Runtime overlay.
+    // Dedicated Runtime window: fake loader demos (also listed under View when edit mode is on).
     ofkitty::runtime().registerWindow({
-        "Progress Demos",
+        "Test window",
         "View",
         /*visible=*/    true,
-        /*editModeOnly=*/ false,
+        /*editModeOnly=*/ true,
         [this](bool& visible) {
 
-            ImGui::SetNextWindowPos(ImVec2(20, 40), ImGuiCond_Once);
-            ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_Once);
+            ImGui::SetNextWindowSize(ImVec2(340, 0), ImGuiCond_FirstUseEver);
 
-            if (!ImGui::Begin("Progress Demos", &visible)) {
+            if (!ImGui::Begin(kProgressTestWindowImGuiTitle, &visible)) {
                 ImGui::End();
                 return;
             }
 
+            ImGui::TextDisabled("Trigger fake loaders — progress shows in the Runtime status bar or a floating window.");
+            ImGui::Spacing();
+
             // ---- Options ----
             ImGui::SeparatorText("Options");
 
-            if (ImGui::Checkbox("Bottom-anchored", &m_bottomAnchored)) {
-                ofkitty::progress().setBottomAnchored(m_bottomAnchored);
+            if (ImGui::Checkbox("Use status bar", &m_useStatusBar)) {
+                ofkitty::progress().setUseStatusBar(m_useStatusBar);
             }
-            ImGui::SetItemTooltip("When ON the bar sticks to the viewport bottom edge.\n"
-                                  "When OFF it floats as a normal window.");
+            ImGui::SetItemTooltip("When ON, progress is drawn in the bottom status bar with the other OF indicators.\n"
+                                  "When OFF, progress uses a small centered floating window instead.");
 
             ImGui::SetNextItemWidth(160.f);
             if (ImGui::SliderFloat("Auto-hide delay (s)", &m_autoHideDelay, 0.f, 8.f, "%.1f s")) {
@@ -50,9 +74,9 @@ void ofApp::setup()
             ImGui::SliderFloat("Sim speed", &m_simulationSpeed, 0.1f, 5.f, "%.1f×");
             ImGui::SetItemTooltip("Multiplier applied to the simulated step rate.");
 
-            // ---- Demos ----
+            // ---- Fake loaders ----
             ImGui::Spacing();
-            ImGui::SeparatorText("Demos");
+            ImGui::SeparatorText("Fake loaders");
 
             // Step-based demo
             bool stepRunning = (m_activeDemo == Demo::StepBased);
@@ -106,8 +130,12 @@ void ofApp::setup()
             if (!anyRunning) ImGui::EndDisabled();
 
             ImGui::End();
-        }
+        },
+        "ofxkit.example_progressbars.test_loaders"
     });
+
+    ofkitty::runtime().addDefaultLayoutLeftDock(kProgressTestWindowImGuiTitle);
+    ofkitty::runtime().setEditMode(true);
 }
 
 // ----------------------------------------------------------------------------
@@ -178,20 +206,49 @@ void ofApp::update()
 
 void ofApp::draw()
 {
-    // Simple gradient backdrop so the bottom bar is visible against the canvas.
-    ofMesh bg;
-    bg.setMode(OF_PRIMITIVE_TRIANGLE_FAN);
-    float w = ofGetWidth(), h = ofGetHeight();
-    bg.addVertex({0,   0,   0}); bg.addColor({40,  42,  54, 255});
-    bg.addVertex({w,   0,   0}); bg.addColor({40,  42,  54, 255});
-    bg.addVertex({w,   h,   0}); bg.addColor({20,  22,  32, 255});
-    bg.addVertex({0,   h,   0}); bg.addColor({20,  22,  32, 255});
-    bg.draw();
+    const float w = static_cast<float>(ofGetWidth());
+    const float h = static_cast<float>(ofGetHeight());
+    const float t = ofGetElapsedTimef();
 
-    ofSetColor(120, 122, 140);
-    ofDrawBitmapString(
-        "ofxKit — Progress Window Demo\n"
-        "Open the 'Progress Demos' panel (View menu) to trigger demos.\n"
-        "Cmd-E / Ctrl-E toggles the Edit mode overlay.",
-        20, 180);
+    float pr = canvasProgressFraction();
+    const bool hasProgress = (pr >= 0.f);
+    // Subtle background pulse when idle; shift a bit more while a loader runs
+    const float fade = hasProgress ? ofClamp(pr, 0.f, 1.f)
+                                   : 0.35f + 0.08f * std::sin(t * 0.55f);
+
+    // Soft full-window colour fade (no vignette, no second “ribbon” layer)
+    ofMesh base;
+    base.setMode(OF_PRIMITIVE_TRIANGLE_FAN);
+    const float drift = t * 18.f + fade * 55.f;
+    auto corner = [&](float hueBase, float sat, float br) {
+        ofColor c;
+        c.setHsb(
+            static_cast<unsigned char>(ofWrap(hueBase + drift, 0.f, 255.f)),
+            static_cast<unsigned char>(ofClamp(sat, 0.f, 255.f)),
+            static_cast<unsigned char>(ofClamp(br, 0.f, 255.f)),
+            255);
+        return c;
+    };
+    base.addVertex({0, 0, 0});
+    base.addColor(corner(128.f + 8.f * std::sin(t * 0.22f), 75.f, 42.f + 14.f * fade));
+    base.addVertex({w, 0, 0});
+    base.addColor(corner(142.f + 6.f * std::sin(t * 0.19f), 72.f, 40.f + 12.f * fade));
+    base.addVertex({w, h, 0});
+    base.addColor(corner(158.f + 7.f * std::sin(t * 0.21f), 78.f, 36.f + 16.f * fade));
+    base.addVertex({0, h, 0});
+    base.addColor(corner(135.f + 9.f * std::sin(t * 0.24f), 70.f, 38.f + 13.f * fade));
+    base.draw();
+
+    const std::string help =
+        "ofxKit — Progress window demo\n"
+        "View > Test window — fake loader buttons (dock left on a fresh layout).\n"
+        "Ctrl+E — toggle edit mode. With “Use status bar”, progress shares the bottom status strip.";
+
+    ofSetColor(228, 232, 245);
+    ofPushMatrix();
+    ofTranslate(28.f, 44.f);
+    ofScale(2.f, 2.f);
+    ofDrawBitmapString(help, 0.f, 0.f);
+    ofPopMatrix();
+    ofSetColor(255);
 }

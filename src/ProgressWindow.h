@@ -10,11 +10,10 @@ struct ImVec2;
 namespace ofkitty {
 
 // ============================================================================
-// ProgressWindow — tickable progress bar overlay
+// ProgressWindow — tickable progress UI in the Runtime overlay
 // ============================================================================
-// A non-modal, non-intrusive progress panel drawn via the ofxKit Runtime
-// overlay.  Optionally anchored to the bottom of the screen so it doesn't
-// occlude the canvas.
+// Progress appears either in the bottom status bar (default) or as a small
+// floating ImGui window.
 //
 // Supports two usage patterns:
 //
@@ -48,11 +47,15 @@ public:
     // Configuration — may be set before or after begin()
     // -------------------------------------------------------------------------
 
-    /// Anchor the panel to the bottom edge of the viewport (default: true).
-    /// When true the panel is full-width, no title bar, immovable.
-    /// When false it floats as a regular ImGui window.
-    void setBottomAnchored(bool anchored);
-    bool isBottomAnchored() const;
+    /// When true (default), title / bar / label render in the Runtime status bar.
+    /// When false, a floating ImGui window is used instead.
+    void setUseStatusBar(bool useStatusBar);
+    bool useStatusBar() const;
+
+    /// @deprecated Prefer setUseStatusBar(). Same behaviour: true = status bar.
+    void setBottomAnchored(bool anchored) { setUseStatusBar(anchored); }
+    /// @deprecated Prefer useStatusBar().
+    bool isBottomAnchored() const { return useStatusBar(); }
 
     /// Seconds to keep the panel visible after finish() before auto-hiding.
     /// 0 = hide immediately on finish(). Default: 2.0.
@@ -106,15 +109,20 @@ public:
     // Runtime integration
     // -------------------------------------------------------------------------
 
-    /// Register as a RuntimeWindow with the active Runtime singleton.
-    /// Called automatically on the first begin(); safe to call multiple times.
+    /// Register floating window with Runtime (for non–status-bar mode).
+    /// Called automatically on the first begin(); safe to call from setup().
     void registerWithRuntime();
+
+    /// Status-bar slot — registered by Runtime after built-in status items so order is stable.
+    void attachStatusBarItem();
 
 private:
     ProgressWindow() = default;
 
-    /// Called from the Runtime draw loop on the GL / main thread.
+    /// Floating-window path (when !useStatusBar()).
     void draw(bool& visible);
+
+    void drawInStatusBar();
 
     // ------------------------------------------------------------------
     // Mutable state — protected by m_mutex for cross-thread access
@@ -133,13 +141,14 @@ private:
     // ------------------------------------------------------------------
     // Configuration — read only from GL thread after setup, so no lock needed
     // ------------------------------------------------------------------
-    bool  m_bottomAnchored  {true};
+    bool  m_useStatusBar    {true};
     float m_autoHideDelay   {2.0f};
 
     // ------------------------------------------------------------------
     // Runtime bookkeeping — main thread only
     // ------------------------------------------------------------------
-    bool m_registered {false};
+    bool m_registered            {false};
+    bool m_statusBarItemAttached {false};
 };
 
 // Convenience free function — mirrors ofkitty::runtime().

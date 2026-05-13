@@ -99,9 +99,7 @@ public:
     // Edit mode
     // -------------------------------------------------------------------------
     bool isEditMode()    const { return m_editMode; }
-    void toggleEditMode()      { m_editMode = !m_editMode;
-                                 ofLogNotice("ofxKit") << "Edit mode "
-                                     << (m_editMode ? "ON" : "OFF"); }
+    void toggleEditMode();
     void setEditMode(bool on)  { m_editMode = on; }
 
     // -------------------------------------------------------------------------
@@ -357,6 +355,16 @@ public:
     const std::vector<RuntimeWindow>& windows() const { return m_windows; }
 
     // -------------------------------------------------------------------------
+    // Default dock layout — optional extras
+    // -------------------------------------------------------------------------
+    /// ImGui window titles as passed to ImGui::Begin (including any ###id
+    /// suffix), docked into the left split of buildDefaultDockLayout() next to
+    /// the Scene panel. Call from ofApp::setup() after registerWindow(). Only
+    /// applied when the default layout is built (no imgui.ini on first run, or
+    /// after View ▸ Reset Layout).
+    void addDefaultLayoutLeftDock(std::string imguiWindowTitle);
+
+    // -------------------------------------------------------------------------
     // Preference pages — two-pane category/page Preferences window
     // -------------------------------------------------------------------------
     // Register a page that appears in the Preferences window. Pages are grouped
@@ -435,7 +443,8 @@ public:
     //           r.emplace<MyComp>(e).initialise();
     //       });
     //
-    // ofxEnTTKit built-ins are pre-registered by the Runtime in onSetup().
+    // Shipped-kit picker rows come from ecs::registerKitComponentMenu(...)
+    // (Runtime::registerBuiltInComponents() in onSetup() forwards each row here).
     // -------------------------------------------------------------------------
 
     struct ComponentDescriptor {
@@ -553,6 +562,7 @@ private:
     void drawGizmoInViewport(ViewportInstance& vp, const ofRectangle& imgScreenRect);
 
     bool             m_editMode  {false};
+    int              m_toggleEditLastFrame {-1};
     bool             m_attached  {false};
     bool             m_skipShortcutDispatch {false};
     bool             m_builtInWindowsRegistered {false};
@@ -566,6 +576,7 @@ private:
     // otherwise dereference a dangling const char*.
     std::string      m_imguiIniPath;
     std::vector<RuntimeWindow> m_windows;
+    std::vector<std::string>   m_defaultLayoutExtraLeftDocks;
     // Visibility states loaded from disk before windows are registered.
     // registerWindow() applies the saved state so addon windows also restore.
     std::unordered_map<std::string, bool> m_savedWindowVisibility;
