@@ -17,7 +17,16 @@ Press **Cmd-E** at runtime to toggle the overlay (`Ctrl-E` is also registered as
 
 ### Registered ImGui windows
 
-Sketches register dockable Inspector panels via `Runtime::registerWindow` — either with a **lambda** or (when the window-class headers are present in your ofxKit checkout) by subclassing **`KitRegisteredWindow`**, the same typed shape as **ofxBapp**’s **`bapp::baseWindow`**. See **[docs/windows.md](docs/windows.md)** for lambdas, **`KitPropertyBag`** / **baseProp** parity, and the optional **ofxBapp** bridge include.
+Sketches register dockable Inspector panels via `Runtime::registerWindow` — either with a **lambda** or (when the window-class headers are present in your ofxKit checkout) by subclassing **`KitRegisteredWindow`**, the same typed shape as **ofxBapp**'s **`bapp::baseWindow`**. See **[docs/windows.md](docs/windows.md)** for lambdas, **`KitPropertyBag`** / **baseProp** parity, and the optional **ofxBapp** bridge include.
+
+Built-in windows (Scene, Properties, Toolbar, Shortcuts, Preferences, Code Editor, Path Editor) are all registered by default. Call any of these before `ofRunApp()` to customise which ones appear:
+
+```cpp
+runtime().disableBuiltInWindows();          // none
+runtime().enableBuiltInWindows();           // Scene + Properties only
+runtime().enableBuiltInWindow("Toolbar");   // one at a time (additive)
+runtime().enableAllBuiltInWindows();        // all (explicit default)
+```
 
 ---
 
@@ -167,7 +176,7 @@ void ofApp::setup() {
 
 ### Components and systems
 
-Built-in **“+ Add Component”** picker rows for shipped **`ecs::*`** types come from **ofxEnTTKit** (`ecs::registerKitComponentMenu`), which `ofxKit` forwards into `runtime().registerComponent(...)` at startup. Component **property** panels stay type-driven via **ofxEnTTInspector**.
+Built-in **"+ Add Component"** picker rows for shipped **`ecs::*`** types come from **ofxEnTTKit** (`ecs::registerKitComponentMenu`), which `ofxKit` forwards into `runtime().registerComponent(...)` at startup. Component **property** panels stay type-driven via **ofxEnTTInspector**.
 
 Addons extend the picker by registering their own types:
 
@@ -218,6 +227,10 @@ SystemRegistry       setup/update/draw/cleanup lifecycle orchestration
 | `runtime().toggleEditMode()`                     | Toggle Edit mode on/off                                                  |
 | `runtime().setAppName(name)`                     | Sets the name shown in the menu bar and status bar                       |
 | `runtime().registerWindow(w)`                    | Register a dockable UI panel (appears in the View menu)                  |
+| `runtime().disableBuiltInWindows()`              | Skip all built-in window registration                                    |
+| `runtime().enableBuiltInWindow(nameOrId)`        | Opt in to one built-in window; implicitly disables all others            |
+| `runtime().enableBuiltInWindows()`               | Register the standard set: Scene + Properties                            |
+| `runtime().enableAllBuiltInWindows()`            | Register all built-in windows (explicit default)                         |
 | `runtime().addMenuBarGroup(name, cb)`            | Add a top-level menu group to the main menu bar                          |
 | `runtime().registerComponent<T>(name, cat)`      | Register a component type in the Add Component picker (template form)    |
 | `runtime().registerComponent(desc)`              | Register a component with explicit has/add/remove lambdas                |
@@ -300,7 +313,7 @@ In the ofKitty distribution, install/update these dependencies with:
 | Cmd-E  | Toggle Edit mode overlay |
 | Ctrl-E | Toggle Edit mode overlay |
 | F2     | Toggle Rulers            |
-| TAB    | Toggle Edit mode (alias registered by `example-ofKitty`; add it in your own `setup()` if you want it) |
+| TAB    | Toggle Edit mode (built-in alias; suppressed when ImGui has keyboard focus) |
 | W      | Gizmo: Translate (while in Edit mode) |
 | E      | Gizmo: Rotate (while in Edit mode)    |
 | R      | Gizmo: Scale (while in Edit mode)     |
@@ -311,15 +324,17 @@ In the ofKitty distribution, install/update these dependencies with:
 
 ## Docs
 
-| File                                                          | Topic                                              |
-|---------------------------------------------------------------|----------------------------------------------------|
-| [`docs/component-registry.md`](docs/component-registry.md)   | ComponentRegistry API, addon registration, picker  |
-| [`docs/scene-window.md`](docs/scene-window.md)               | Scene hierarchy tree, ofxNode traversal, selection |
-| [`docs/status-bar.md`](docs/status-bar.md)                   | Status bar layout and implementation notes         |
-| [`docs/preferences.md`](docs/preferences.md)                 | App Preferences window — all OF settings           |
-| [`docs/rulers.md`](docs/rulers.md)                           | Rulers overlay — pixel coordinates + mouse tracking|
-| [`docs/viewport-window.md`](docs/viewport-window.md)         | Secondary Viewport panel — FBO, camera controls   |
-| [`docs/tools.md`](docs/tools.md)                             | File dialog, Gizmo, Code Editor, Path Editor       |
+| File                                                          | Topic                                               |
+|---------------------------------------------------------------|-----------------------------------------------------|
+| [`docs/component-registry.md`](docs/component-registry.md)   | ComponentRegistry API, addon registration, picker   |
+| [`docs/scene-window.md`](docs/scene-window.md)               | Scene hierarchy tree, ofxNode traversal, selection  |
+| [`docs/layers-panel.md`](docs/layers-panel.md)               | LayersPanel tree, ReorderDragDrop, LayerSystem      |
+| [`docs/status-bar.md`](docs/status-bar.md)                   | Status bar layout and implementation notes          |
+| [`docs/preferences.md`](docs/preferences.md)                 | App Preferences window — all OF settings            |
+| [`docs/rulers.md`](docs/rulers.md)                           | Rulers overlay — pixel coordinates + mouse tracking |
+| [`docs/viewport-window.md`](docs/viewport-window.md)         | Secondary Viewport panel — FBO, camera controls     |
+| [`docs/tools.md`](docs/tools.md)                             | File dialog, Gizmo, Code Editor, Path Editor        |
+| [`docs/dockspace.md`](docs/dockspace.md)                     | Dockspace central node — passthrough vs opaque      |
 
 
 ---
@@ -345,4 +360,3 @@ openFrameworks app
   ├── ofxImGui            — ImGui window management
   └── ofxKit              — runtime singleton + Edit mode
 ```
-

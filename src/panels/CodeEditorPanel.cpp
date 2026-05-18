@@ -9,6 +9,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <regex>
 
 namespace ofkitty {
 
@@ -34,8 +35,11 @@ void CodeEditorPanel::setDialogCallbacks(
     m_saveFile = std::move(saveFile);
 }
 
-void CodeEditorPanel::setText(const std::string& text)
+void CodeEditorPanel::setText(const std::string& text,
+                              TextEditor::LanguageDefinitionId lang)
 {
+    if (lang != TextEditor::LanguageDefinitionId::None)
+        m_editor.SetLanguageDefinition(lang);
     m_editor.SetText(text);
 }
 
@@ -52,7 +56,8 @@ void CodeEditorPanel::setLanguage(TextEditor::LanguageDefinitionId lang)
 void CodeEditorPanel::draw(bool& visible)
 {
     ImGui::SetNextWindowSize(ImVec2(820, 580), ImGuiCond_FirstUseEver);
-    ImGuiWindowFlags winFlags = ImGuiWindowFlags_MenuBar;
+    ImGuiWindowFlags winFlags = ImGuiWindowFlags_MenuBar
+                              | ImGuiWindowFlags_NoFocusOnAppearing;
     if (!ImGui::Begin("Code Editor###ofxkit.window.code_editor", &visible, winFlags)) {
         ImGui::End();
         return;
@@ -76,6 +81,8 @@ void CodeEditorPanel::draw(bool& visible)
             m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Json);
         else if (ext == "sql")
             m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Sql);
+        else if (ext == "gcode" || ext == "nc" || ext == "cnc" || ext == "tap")
+            m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Gcode);
         else
             m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::None);
     };
@@ -162,7 +169,7 @@ void CodeEditorPanel::draw(bool& visible)
             m_findVisible     = true;
             m_replaceVisible  = false;
         }
-        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_H)) {
+        if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_F)) {
             m_findVisible     = true;
             m_replaceVisible  = true;
         }
@@ -206,7 +213,7 @@ void CodeEditorPanel::draw(bool& visible)
                 m_findVisible    = true;
                 m_replaceVisible = false;
             }
-            if (ImGui::MenuItem("Find & Replace", "Ctrl+H")) {
+            if (ImGui::MenuItem("Find & Replace", "Ctrl+Shift+F")) {
                 m_findVisible    = true;
                 m_replaceVisible = true;
             }
@@ -233,6 +240,7 @@ void CodeEditorPanel::draw(bool& visible)
                     {"AngelScript", TextEditor::LanguageDefinitionId::AngelScript},
                     {"GLSL", TextEditor::LanguageDefinitionId::Glsl},
                     {"HLSL", TextEditor::LanguageDefinitionId::Hlsl},
+                    {"G-code", TextEditor::LanguageDefinitionId::Gcode},
                 };
                 auto curLang = m_editor.GetLanguageDefinition();
                 for (auto& l : kLangs)
@@ -309,15 +317,91 @@ void CodeEditorPanel::draw(bool& visible)
         ImGui::Checkbox("Aa", &m_caseSensitive);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Case Sensitive");
+
+        // [.*] Regex toggle
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            m_useRegex ? ImGui::GetStyleColorVec4(ImGuiCol_CheckMark)
+                       : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        if (ImGui::SmallButton("[.*]"))
+            m_useRegex = !m_useRegex;
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Regular Expression");
+
+        // [""] Whole Word toggle (disabled when regex is active)
+        ImGui::SameLine();
+        ImGui::BeginDisabled(m_useRegex);
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            (m_wholeWord && !m_useRegex)
+                ? ImGui::GetStyleColorVec4(ImGuiCol_CheckMark)
+                : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        if (ImGui::SmallButton("[\"]"))
+            m_wholeWord = !m_wholeWord;
+        ImGui::PopStyleColor();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Whole Word");
+
         ImGui::SameLine();
 
-        auto doFindNext = [&] {
-            if (m_findBuf[0] != '\0')
-                m_editor.SelectNextOccurrenceOf(m_findBuf, (int)strlen(m_findBuf), m_caseSensitive);
+        // Helpers ----------------------------------------------------------------
+
+        // Convert flat-string offset → (line, col)
+        auto offsetToCoords = [](const std::string& text, size_t offset) -> std::pair<int,int> {
+            int line = 0, col = 0;
+            for (size_t i = 0; i < offset && i < text.size(); ++i) {
+                if (text[i] == '\n') { ++line; col = 0; }
+                else                 { ++col; }
+            }
+            return {line, col};
         };
+
+        auto doFindNext = [&] {
+            if (m_findBuf[0] == '\0') return;
+            if (m_useRegex) {
+                try {
+                    auto rxFlags = std::regex_constants::ECMAScript;
+                    if (!m_caseSensitive) rxFlags |= std::regex_constants::icase;
+                    std::regex  pat(m_findBuf, rxFlags);
+                    std::string full = m_editor.GetText();
+                    // Compute flat offset of current cursor
+                    int curLine = 0, curCol = 0;
+                    m_editor.GetCursorPosition(curLine, curCol);
+                    size_t startOff = 0;
+                    { int ln = 0, col = 0;
+                      for (size_t i = 0; i < full.size(); ++i) {
+                          if (ln == curLine && col >= curCol) { startOff = i; break; }
+                          if (full[i] == '\n') { ++ln; col = 0; } else { ++col; }
+                      }
+                    }
+                    std::smatch sm;
+                    bool found = std::regex_search(full.cbegin() + (std::ptrdiff_t)startOff,
+                                                   full.cend(), sm, pat);
+                    if (!found)
+                        found = std::regex_search(full.cbegin(), full.cend(), sm, pat);
+                    if (found) {
+                        size_t s = (size_t)(sm.prefix().first - full.cbegin()) + (size_t)sm.position();
+                        size_t e = s + (size_t)sm.length();
+                        auto [sl, sc] = offsetToCoords(full, s);
+                        auto [el, ec] = offsetToCoords(full, e);
+                        m_editor.SelectRegion(sl, sc, el, ec);
+                    }
+                } catch (std::regex_error&) {}
+            } else {
+                m_editor.SelectNextOccurrenceOf(m_findBuf, (int)strlen(m_findBuf),
+                                                m_caseSensitive, m_wholeWord);
+            }
+        };
+
         auto doFindAll = [&] {
-            if (m_findBuf[0] != '\0')
-                m_editor.SelectAllOccurrencesOf(m_findBuf, (int)strlen(m_findBuf), m_caseSensitive);
+            if (m_findBuf[0] == '\0') return;
+            if (m_useRegex) {
+                doFindNext(); // regex multi-cursor not supported; Replace All still works
+            } else {
+                m_editor.SelectAllOccurrencesOf(m_findBuf, (int)strlen(m_findBuf),
+                                                m_caseSensitive, m_wholeWord);
+            }
         };
 
         if (ImGui::SmallButton("Next##code_find") || enterPressed)
@@ -329,36 +413,68 @@ void CodeEditorPanel::draw(bool& visible)
         if (ImGui::SmallButton("x##code_find"))
             m_findVisible = false;
 
+        // Match count display ----------------------------------------------------
         if (m_findBuf[0] != '\0') {
-            const std::string full   = m_editor.GetText();
-            const std::string term   = m_findBuf;
-            int               count = 0;
-            std::string haystack =
-                m_caseSensitive
-                    ? full
-                    : [&] {
-                          std::string lc = full;
-                          std::transform(lc.begin(), lc.end(), lc.begin(), ::tolower);
-                          return lc;
-                      }();
-            std::string needle =
-                m_caseSensitive
-                    ? term
-                    : [&] {
-                          std::string lc = term;
-                          std::transform(lc.begin(), lc.end(), lc.begin(), ::tolower);
-                          return lc;
-                      }();
-            for (size_t pos = 0; (pos = haystack.find(needle, pos)) != std::string::npos;
-                 pos += needle.size())
-                ++count;
+            int count = 0;
+            bool invalidRegex = false;
+
+            if (m_useRegex) {
+                try {
+                    auto rxFlags = std::regex_constants::ECMAScript;
+                    if (!m_caseSensitive) rxFlags |= std::regex_constants::icase;
+                    std::regex  pat(m_findBuf, rxFlags);
+                    std::string full = m_editor.GetText();
+                    count = (int)std::distance(
+                        std::sregex_iterator(full.begin(), full.end(), pat),
+                        std::sregex_iterator{});
+                } catch (std::regex_error&) {
+                    invalidRegex = true;
+                }
+            } else {
+                const std::string full = m_editor.GetText();
+                const std::string term = m_findBuf;
+                std::string haystack =
+                    m_caseSensitive
+                        ? full
+                        : [&] {
+                              std::string lc = full;
+                              std::transform(lc.begin(), lc.end(), lc.begin(), ::tolower);
+                              return lc;
+                          }();
+                std::string needle =
+                    m_caseSensitive
+                        ? term
+                        : [&] {
+                              std::string lc = term;
+                              std::transform(lc.begin(), lc.end(), lc.begin(), ::tolower);
+                              return lc;
+                          }();
+                auto isWordChar = [](char c) {
+                    return std::isalnum((unsigned char)c) || c == '_';
+                };
+                for (size_t pos = 0;
+                     (pos = haystack.find(needle, pos)) != std::string::npos;
+                     pos += needle.size()) {
+                    if (m_wholeWord) {
+                        bool ok = (pos == 0 || !isWordChar(haystack[pos - 1])) &&
+                                  (pos + needle.size() >= haystack.size() ||
+                                   !isWordChar(haystack[pos + needle.size()]));
+                        if (!ok) continue;
+                    }
+                    ++count;
+                }
+            }
+
             ImGui::SameLine();
-            if (count == 0)
+            if (invalidRegex)
+                ImGui::TextColored({1.f, 0.6f, 0.2f, 1.f}, "invalid regex");
+            else if (count == 0)
                 ImGui::TextColored({1.f, 0.4f, 0.4f, 1.f}, "no matches");
             else
                 ImGui::TextDisabled("%d match%s", count, count == 1 ? "" : "es");
         }
 
+        // Replace bar ------------------------------------------------------------
         if (m_replaceVisible) {
             ImGui::SetNextItemWidth(280.f);
             ImGui::InputText("##replace", m_replaceBuf, sizeof(m_replaceBuf));
@@ -368,23 +484,49 @@ void CodeEditorPanel::draw(bool& visible)
             ImGui::BeginDisabled(!hasMatch || m_editor.IsReadOnlyEnabled());
             if (ImGui::SmallButton("Replace##code_find_current")) {
                 if (m_findBuf[0] != '\0') {
-                    std::string       src       = m_editor.GetText();
-                    const std::string term       = m_findBuf;
-                    const std::string repl       = m_replaceBuf;
-                    std::string       lower_src  = src;
-                    std::string       lower_term = term;
-                    if (!m_caseSensitive) {
-                        std::transform(lower_src.begin(), lower_src.end(), lower_src.begin(),
-                                       ::tolower);
-                        std::transform(lower_term.begin(), lower_term.end(), lower_term.begin(),
-                                       ::tolower);
-                    }
-                    size_t pos = lower_src.find(lower_term);
-                    if (pos != std::string::npos) {
-                        src.replace(pos, term.size(), repl);
-                        m_editor.SetText(src);
-                        m_editor.SelectNextOccurrenceOf(m_findBuf, (int)strlen(m_findBuf),
-                                                         m_caseSensitive);
+                    if (m_useRegex) {
+                        try {
+                            auto rxFlags = std::regex_constants::ECMAScript;
+                            if (!m_caseSensitive) rxFlags |= std::regex_constants::icase;
+                            std::regex  pat(m_findBuf, rxFlags);
+                            std::string src = m_editor.GetText();
+                            std::smatch sm;
+                            if (std::regex_search(src.cbegin(), src.cend(), sm, pat)) {
+                                size_t pos = (size_t)sm.position();
+                                src.replace(pos, (size_t)sm.length(), m_replaceBuf);
+                                m_editor.SetText(src);
+                                doFindNext();
+                            }
+                        } catch (std::regex_error&) {}
+                    } else {
+                        std::string       src       = m_editor.GetText();
+                        const std::string term       = m_findBuf;
+                        const std::string repl       = m_replaceBuf;
+                        std::string       lower_src  = src;
+                        std::string       lower_term = term;
+                        if (!m_caseSensitive) {
+                            std::transform(lower_src.begin(), lower_src.end(), lower_src.begin(),
+                                           ::tolower);
+                            std::transform(lower_term.begin(), lower_term.end(), lower_term.begin(),
+                                           ::tolower);
+                        }
+                        auto isWordChar = [](char c) {
+                            return std::isalnum((unsigned char)c) || c == '_';
+                        };
+                        size_t pos = 0;
+                        while ((pos = lower_src.find(lower_term, pos)) != std::string::npos) {
+                            if (!m_wholeWord ||
+                                ((pos == 0 || !isWordChar(lower_src[pos - 1])) &&
+                                 (pos + lower_term.size() >= lower_src.size() ||
+                                  !isWordChar(lower_src[pos + lower_term.size()])))) {
+                                src.replace(pos, term.size(), repl);
+                                m_editor.SetText(src);
+                                m_editor.SelectNextOccurrenceOf(m_findBuf, (int)strlen(m_findBuf),
+                                                                 m_caseSensitive, m_wholeWord);
+                                break;
+                            }
+                            pos += lower_term.size();
+                        }
                     }
                 }
             }
@@ -394,34 +536,61 @@ void CodeEditorPanel::draw(bool& visible)
             ImGui::BeginDisabled(m_editor.IsReadOnlyEnabled());
             if (ImGui::SmallButton("Replace All##code_find_all")) {
                 if (m_findBuf[0] != '\0') {
-                    std::string       src  = m_editor.GetText();
-                    const std::string term = m_findBuf;
-                    const std::string repl = m_replaceBuf;
-                    int               replCount = 0;
-                    if (m_caseSensitive) {
-                        for (size_t pos = 0; (pos = src.find(term, pos)) != std::string::npos;) {
-                            src.replace(pos, term.size(), repl);
-                            pos += repl.size();
-                            ++replCount;
-                        }
+                    if (m_useRegex) {
+                        try {
+                            auto rxFlags = std::regex_constants::ECMAScript;
+                            if (!m_caseSensitive) rxFlags |= std::regex_constants::icase;
+                            std::regex  pat(m_findBuf, rxFlags);
+                            std::string src    = m_editor.GetText();
+                            std::string result = std::regex_replace(src, pat, m_replaceBuf);
+                            if (result != src)
+                                m_editor.SetText(result);
+                        } catch (std::regex_error&) {}
                     } else {
-                        std::string lower = src;
-                        std::string lterm = term;
-                        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-                        std::transform(lterm.begin(), lterm.end(), lterm.begin(), ::tolower);
-                        for (size_t pos = 0; (pos = lower.find(lterm, pos)) != std::string::npos;) {
-                            src.replace(pos, term.size(), repl);
-                            lower.replace(pos, lterm.size(),
-                                          repl.size() > 0 ? std::string(repl.size(), ' ')
-                                                          : std::string());
-                            pos += repl.size();
-                            ++replCount;
+                        std::string       src  = m_editor.GetText();
+                        const std::string term = m_findBuf;
+                        const std::string repl = m_replaceBuf;
+                        int               replCount = 0;
+                        auto isWordChar = [](char c) {
+                            return std::isalnum((unsigned char)c) || c == '_';
+                        };
+                        if (m_caseSensitive) {
+                            for (size_t pos = 0; (pos = src.find(term, pos)) != std::string::npos;) {
+                                if (m_wholeWord) {
+                                    bool ok = (pos == 0 || !isWordChar(src[pos - 1])) &&
+                                              (pos + term.size() >= src.size() ||
+                                               !isWordChar(src[pos + term.size()]));
+                                    if (!ok) { pos += term.size(); continue; }
+                                }
+                                src.replace(pos, term.size(), repl);
+                                pos += repl.size();
+                                ++replCount;
+                            }
+                        } else {
+                            std::string lower = src;
+                            std::string lterm = term;
+                            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                            std::transform(lterm.begin(), lterm.end(), lterm.begin(), ::tolower);
+                            for (size_t pos = 0; (pos = lower.find(lterm, pos)) != std::string::npos;) {
+                                if (m_wholeWord) {
+                                    bool ok = (pos == 0 || !isWordChar(lower[pos - 1])) &&
+                                              (pos + lterm.size() >= lower.size() ||
+                                               !isWordChar(lower[pos + lterm.size()]));
+                                    if (!ok) { pos += lterm.size(); continue; }
+                                }
+                                src.replace(pos, term.size(), repl);
+                                lower.replace(pos, lterm.size(),
+                                              repl.size() > 0 ? std::string(repl.size(), ' ')
+                                                              : std::string());
+                                pos += repl.size();
+                                ++replCount;
+                            }
                         }
+                        if (replCount > 0)
+                            m_editor.SetText(src);
+                        ofLogNotice("ofxKit::CodeEditor") << "Replaced " << replCount
+                                                          << " occurrence(s).";
                     }
-                    if (replCount > 0)
-                        m_editor.SetText(src);
-                    ofLogNotice("ofxKit::CodeEditor") << "Replaced " << replCount
-                                                      << " occurrence(s).";
                 }
             }
             ImGui::EndDisabled();

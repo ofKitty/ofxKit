@@ -169,6 +169,19 @@ void Runtime::drawPrefsAppearance()
                        });
     }
 
+    ImGui::SeparatorText("Edit Mode Toggle");
+    ImGui::TextDisabled("Controls what Tab / Ctrl+E hides when leaving edit mode.");
+    bool hideAll = m_prefs.hideAllUI;
+    if (ImGui::RadioButton("Hide windows only", !hideAll)) {
+        m_prefs.hideAllUI = false;
+        saveAppPrefs();
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Hide entire UI", hideAll)) {
+        m_prefs.hideAllUI = true;
+        saveAppPrefs();
+    }
+
     ImGui::SeparatorText("Style Editor");
     ImGui::ShowStyleEditor();
 }
@@ -246,6 +259,50 @@ void Runtime::drawPrefsGeneral()
         }
         ImGui::TextDisabled(
             "Scales ruler strip width and tick labels (base x UI Scale).");
+
+        ImGui::Spacing();
+        static const char* kUnits[] = {"Pixels", "Millimetres"};
+        int unitIdx = (int)m_prefs.rulerUnit;
+        ImGui::SetNextItemWidth(160.f);
+        if (ImGui::Combo("Panel ruler unit", &unitIdx, kUnits, 2)) {
+            m_prefs.rulerUnit = (AppPrefs::RulerUnit)unitIdx;
+            saveAppPrefs();
+        }
+        ImGui::SetItemTooltip(
+            "Unit shown on per-panel rulers (e.g. Preview, Viewport).\n"
+            "Full-window rulers always show pixels.");
+        ImGui::Spacing();
+    }
+
+    if (ImGui::CollapsingHeader("Margin overlay")) {
+        if (ImGui::Checkbox("Show margin rectangle", &m_prefs.showMarginRect))
+            saveAppPrefs();
+        ImGui::SetItemTooltip(
+            "Draw the printable / safe area inside the canvas in panels\n"
+            "that opt in via ofkitty::drawMarginRect().");
+
+        float col[4] = {
+            m_prefs.marginColor.r / 255.f,
+            m_prefs.marginColor.g / 255.f,
+            m_prefs.marginColor.b / 255.f,
+            m_prefs.marginColor.a / 255.f,
+        };
+        if (ImGui::ColorEdit4("Margin Colour", col)) {
+            m_prefs.marginColor.set(
+                static_cast<unsigned char>(col[0] * 255.f),
+                static_cast<unsigned char>(col[1] * 255.f),
+                static_cast<unsigned char>(col[2] * 255.f),
+                static_cast<unsigned char>(col[3] * 255.f));
+            saveAppPrefs();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##marginColor")) {
+            m_prefs.marginColor.set(180, 90, 220, 200);
+            saveAppPrefs();
+        }
+        ImGui::TextDisabled(
+            "Distinct colour (default purple) so margins are visually\n"
+            "separable from cyan draggable guides.");
         ImGui::Spacing();
     }
 }
@@ -351,7 +408,7 @@ void Runtime::registerBuiltInStatusItems()
     registerStatusItem(
         {"ofxkit.status.editmode",
          "ofxkit",
-         true,
+         false,
          [this] {
              if (m_editMode)
                  ImGui::TextColored({0.39f, 0.90f, 0.50f, 1.f}, "Edit Mode");
@@ -360,7 +417,7 @@ void Runtime::registerBuiltInStatusItems()
          }});
     registerStatusItem({"ofxkit.status.appname",
                         "ofxkit",
-                        true,
+                        false,
                         [this] { ImGui::TextDisabled("%s", m_appName.c_str()); }});
     registerStatusItem({"ofxkit.status.entities",
                         "ofxkit.stats",
@@ -591,11 +648,24 @@ void Runtime::loadAppPrefs()
         if (j.contains("rulerScale"))
             m_prefs.rulerScale =
                 std::clamp(j["rulerScale"].get<float>(), 0.5f, 3.0f);
+        if (j.contains("rulerUnit"))
+            m_prefs.rulerUnit = static_cast<AppPrefs::RulerUnit>(
+                std::clamp(j["rulerUnit"].get<int>(), 0, 1));
+        if (j.contains("hideAllUI"))
+            m_prefs.hideAllUI = j["hideAllUI"].get<bool>();
         if (j.contains("bgR")) {
             m_prefs.bgColor.set(static_cast<unsigned char>((int)j["bgR"]),
                                 static_cast<unsigned char>((int)j["bgG"]),
                                 static_cast<unsigned char>((int)j["bgB"]),
                                 static_cast<unsigned char>((int)j["bgA"]));
+        }
+        if (j.contains("showMarginRect"))
+            m_prefs.showMarginRect = j["showMarginRect"].get<bool>();
+        if (j.contains("marginR")) {
+            m_prefs.marginColor.set(static_cast<unsigned char>((int)j["marginR"]),
+                                    static_cast<unsigned char>((int)j["marginG"]),
+                                    static_cast<unsigned char>((int)j["marginB"]),
+                                    static_cast<unsigned char>((int)j["marginA"]));
         }
 
         if (j.contains("windowVisibility") && j["windowVisibility"].is_object()) {
@@ -644,10 +714,17 @@ void Runtime::saveAppPrefs()
         j["depthTest"]       = m_prefs.depthTest;
         j["logLevel"]        = m_prefs.logLevel;
         j["rulerScale"]      = m_prefs.rulerScale;
+        j["rulerUnit"]       = static_cast<int>(m_prefs.rulerUnit);
+        j["hideAllUI"]       = m_prefs.hideAllUI;
         j["bgR"]             = static_cast<int>(m_prefs.bgColor.r);
         j["bgG"]             = static_cast<int>(m_prefs.bgColor.g);
         j["bgB"]             = static_cast<int>(m_prefs.bgColor.b);
         j["bgA"]             = static_cast<int>(m_prefs.bgColor.a);
+        j["showMarginRect"]  = m_prefs.showMarginRect;
+        j["marginR"]         = static_cast<int>(m_prefs.marginColor.r);
+        j["marginG"]         = static_cast<int>(m_prefs.marginColor.g);
+        j["marginB"]         = static_cast<int>(m_prefs.marginColor.b);
+        j["marginA"]         = static_cast<int>(m_prefs.marginColor.a);
 
         ofJson vis = ofJson::object();
         for (const auto& w : m_windows)
@@ -664,14 +741,15 @@ void Runtime::buildDefaultDockLayout(ImGuiID dockId)
     const ImVec2 size = ImGui::GetMainViewport()->WorkSize;
 
     ImGui::DockBuilderRemoveNode(dockId);
-    ImGui::DockBuilderAddNode(dockId,
-                            ImGuiDockNodeFlags_DockSpace
-                                | ImGuiDockNodeFlags_PassthruCentralNode
-                                | ImGuiDockNodeFlags_NoDockingOverCentralNode);
+    ImGuiDockNodeFlags addNodeFlags = ImGuiDockNodeFlags_DockSpace;
+    if (m_passthruCentralNode)
+        addNodeFlags |= ImGuiDockNodeFlags_PassthruCentralNode
+                     |  ImGuiDockNodeFlags_NoDockingOverCentralNode;
+    ImGui::DockBuilderAddNode(dockId, addNodeFlags);
     ImGui::DockBuilderSetNodeSize(dockId, size);
 
     ImGuiID left, right, centre = dockId;
-    ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.22f, &left, &centre);
+    ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.25f, &left, &centre);
     ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.28f, &right, &centre);
 
     ImGui::DockBuilderDockWindow("Scene###ofxkit.window.scene", left);
@@ -682,13 +760,25 @@ void Runtime::buildDefaultDockLayout(ImGuiID dockId)
     ImGui::DockBuilderDockWindow("Properties###ofxkit.window.properties", right);
     ImGui::DockBuilderDockWindow("Shortcuts###ofxkit.window.shortcuts", right);
     ImGui::DockBuilderDockWindow("Preferences###ofxkit.window.preferences", right);
+    for (const auto& name : m_defaultLayoutExtraRightDocks) {
+        if (!name.empty())
+            ImGui::DockBuilderDockWindow(name.c_str(), right);
+    }
+    for (const auto& name : m_defaultLayoutExtraCenterDocks) {
+        if (!name.empty())
+            ImGui::DockBuilderDockWindow(name.c_str(), centre);
+    }
 
     ImGui::DockBuilderFinish(dockId);
 
     if (ImGuiDockNode* cn = ImGui::DockBuilderGetCentralNode(dockId)) {
-        cn->LocalFlags |= ImGuiDockNodeFlags_PassthruCentralNode
-                           | ImGuiDockNodeFlags_NoDockingOverCentralNode
-                           | ImGuiDockNodeFlags_NoTabBar;
+        // Only suppress the tab bar when the centre is purely passthru/empty.
+        // When app windows are seeded here, keep the tab bar so titles show.
+        if (m_defaultLayoutExtraCenterDocks.empty())
+            cn->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
+        if (m_passthruCentralNode)
+            cn->LocalFlags |= ImGuiDockNodeFlags_PassthruCentralNode
+                           |  ImGuiDockNodeFlags_NoDockingOverCentralNode;
     }
 }
 

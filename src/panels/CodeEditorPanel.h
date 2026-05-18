@@ -29,7 +29,8 @@ public:
 
     void draw(bool& visible);
 
-    void           setText(const std::string& text);
+    void           setText(const std::string& text,
+                           TextEditor::LanguageDefinitionId lang = TextEditor::LanguageDefinitionId::None);
     std::string    getText() const;
     void           setLanguage(TextEditor::LanguageDefinitionId lang);
 
@@ -53,6 +54,8 @@ private:
     char m_findBuf[256]    = {};
     char m_replaceBuf[256] = {};
     bool m_caseSensitive   = false;
+    bool m_useRegex        = false;
+    bool m_wholeWord       = false;
     bool m_findVisible     = false;
     bool m_replaceVisible  = false;
 };

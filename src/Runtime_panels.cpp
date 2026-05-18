@@ -172,85 +172,113 @@ void Runtime::registerBuiltInWindows()
     if (m_builtInWindowsRegistered)
         return;
 
-    registerToolbarItem({"ofkitty.gizmo_translate",
-                         ICON_FA_ARROWS_ALT,
-                         "Translate (W)",
-                         "gizmo",
-                         [this] { m_gizmoOp = GizmoOperation::Translate; },
-                         [this] { return m_gizmoOp == GizmoOperation::Translate; }});
-    registerToolbarItem({"ofkitty.gizmo_rotate",
-                         ICON_FA_SYNC_ALT,
-                         "Rotate (E)",
-                         "gizmo",
-                         [this] { m_gizmoOp = GizmoOperation::Rotate; },
-                         [this] { return m_gizmoOp == GizmoOperation::Rotate; }});
-    registerToolbarItem({"ofkitty.gizmo_scale",
-                         ICON_FA_EXPAND_ALT,
-                         "Scale (R)",
-                         "gizmo",
-                         [this] { m_gizmoOp = GizmoOperation::Scale; },
-                         [this] { return m_gizmoOp == GizmoOperation::Scale; }});
-    registerToolbarItem({"ofkitty.gizmo_universal",
-                         ICON_FA_CROSSHAIRS,
-                         "Universal",
-                         "gizmo",
-                         [this] { m_gizmoOp = GizmoOperation::Universal; },
-                         [this] { return m_gizmoOp == GizmoOperation::Universal; }});
-    registerToolbarItem({"ofkitty.gizmo_world",
-                         ICON_FA_GLOBE,
-                         "World space",
-                         "gizmo_mode",
-                         [this] { m_gizmoMode = GizmoMode::World; },
-                         [this] { return m_gizmoMode == GizmoMode::World; }});
-    registerToolbarItem({"ofkitty.gizmo_local",
-                         ICON_FA_CUBE,
-                         "Local space",
-                         "gizmo_mode",
-                         [this] { m_gizmoMode = GizmoMode::Local; },
-                         [this] { return m_gizmoMode == GizmoMode::Local; }});
+    // Returns true when the window should be registered: either auto-registration
+    // is on (default), or the app explicitly requested this window via
+    // addBuiltInWindow() using its display name or stable ID.
+    auto wantWindow = [&](const std::string& name, const std::string& id) -> bool {
+        if (m_autoRegisterBuiltIns) return true;
+        return m_requestedBuiltInWindows.count(name) > 0
+            || m_requestedBuiltInWindows.count(id)   > 0;
+    };
 
-    registerWindow({"Toolbar",
-                    "View",
-                    true,
-                    true,
-                    [this](bool& visible) { drawToolbarWindow(visible); },
-                    "ofxkit.window.toolbar"});
-    registerWindow({"Scene",
-                    "View",
-                    true,
-                    true,
-                    [this](bool& visible) { drawSceneWindow(visible); },
-                    "ofxkit.window.scene"});
-    registerWindow({"Properties",
-                    "View",
-                    true,
-                    true,
-                    [this](bool& visible) { drawPropertiesWindow(visible); },
-                    "ofxkit.window.properties"});
-    registerWindow({"Shortcuts",
-                    "View",
-                    false,
-                    true,
-                    [this](bool& visible) { drawShortcutsWindow(visible); },
-                    "ofxkit.window.shortcuts"});
-    registerWindow({"Preferences",
-                    "",
-                    false,
-                    true,
-                    [this](bool& visible) { drawPreferencesWindow(visible); },
-                    "ofxkit.window.preferences"});
-    registerWindow({"Code Editor",
-                    "View",
-                    false,
-                    true,
-                    [this](bool& visible) { drawCodeEditorWindow(visible); },
-                    "ofxkit.window.code_editor"});
-    registerWindow({"Path Editor",
-                    "View",
-                    false,
-                    true,
-                    [this](bool& visible) { drawPathEditorWindow(visible); },
-                    "ofxkit.window.path_editor"});
+    if (wantWindow("Toolbar", "ofxkit.window.toolbar")) {
+        registerToolbarItem({"ofkitty.gizmo_translate",
+                             ICON_FA_ARROWS_ALT,
+                             "Translate (W)",
+                             "gizmo",
+                             [this] { m_gizmoOp = GizmoOperation::Translate; },
+                             [this] { return m_gizmoOp == GizmoOperation::Translate; }});
+        registerToolbarItem({"ofkitty.gizmo_rotate",
+                             ICON_FA_SYNC_ALT,
+                             "Rotate (E)",
+                             "gizmo",
+                             [this] { m_gizmoOp = GizmoOperation::Rotate; },
+                             [this] { return m_gizmoOp == GizmoOperation::Rotate; }});
+        registerToolbarItem({"ofkitty.gizmo_scale",
+                             ICON_FA_EXPAND_ALT,
+                             "Scale (R)",
+                             "gizmo",
+                             [this] { m_gizmoOp = GizmoOperation::Scale; },
+                             [this] { return m_gizmoOp == GizmoOperation::Scale; }});
+        registerToolbarItem({"ofkitty.gizmo_universal",
+                             ICON_FA_CROSSHAIRS,
+                             "Universal",
+                             "gizmo",
+                             [this] { m_gizmoOp = GizmoOperation::Universal; },
+                             [this] { return m_gizmoOp == GizmoOperation::Universal; }});
+        registerToolbarItem({"ofkitty.gizmo_world",
+                             ICON_FA_GLOBE,
+                             "World space",
+                             "gizmo_mode",
+                             [this] { m_gizmoMode = GizmoMode::World; },
+                             [this] { return m_gizmoMode == GizmoMode::World; }});
+        registerToolbarItem({"ofkitty.gizmo_local",
+                             ICON_FA_CUBE,
+                             "Local space",
+                             "gizmo_mode",
+                             [this] { m_gizmoMode = GizmoMode::Local; },
+                             [this] { return m_gizmoMode == GizmoMode::Local; }});
+        registerWindow({"Toolbar",
+                        "View",
+                        true,
+                        true,
+                        [this](bool& visible) { drawToolbarWindow(visible); },
+                        "ofxkit.window.toolbar"});
+    }
+
+    if (wantWindow("Scene", "ofxkit.window.scene")) {
+        registerWindow({"Scene",
+                        "View",
+                        true,
+                        true,
+                        [this](bool& visible) { drawSceneWindow(visible); },
+                        "ofxkit.window.scene"});
+    }
+
+    if (wantWindow("Properties", "ofxkit.window.properties")) {
+        registerWindow({"Properties",
+                        "View",
+                        true,
+                        true,
+                        [this](bool& visible) { drawPropertiesWindow(visible); },
+                        "ofxkit.window.properties"});
+    }
+
+    if (wantWindow("Shortcuts", "ofxkit.window.shortcuts")) {
+        registerWindow({"Shortcuts",
+                        "View",
+                        false,
+                        true,
+                        [this](bool& visible) { drawShortcutsWindow(visible); },
+                        "ofxkit.window.shortcuts"});
+    }
+
+    if (wantWindow("Preferences", "ofxkit.window.preferences")) {
+        registerWindow({"Preferences",
+                        "",
+                        false,
+                        true,
+                        [this](bool& visible) { drawPreferencesWindow(visible); },
+                        "ofxkit.window.preferences"});
+    }
+
+    if (wantWindow("Code Editor", "ofxkit.window.code_editor")) {
+        registerWindow({"Code Editor",
+                        "View",
+                        false,
+                        true,
+                        [this](bool& visible) { drawCodeEditorWindow(visible); },
+                        "ofxkit.window.code_editor"});
+    }
+
+    if (wantWindow("Path Editor", "ofxkit.window.path_editor")) {
+        registerWindow({"Path Editor",
+                        "View",
+                        false,
+                        true,
+                        [this](bool& visible) { drawPathEditorWindow(visible); },
+                        "ofxkit.window.path_editor"});
+    }
 
     m_builtInWindowsRegistered = true;
 }

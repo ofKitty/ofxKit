@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ofkitty {
@@ -36,7 +37,7 @@ public:
         std::string name;
         std::string menuGroup {"View"};
         bool visible      {true};
-        bool editModeOnly {false}; // false = always drawn; true = only drawn in Edit mode
+        bool editModeOnly {true};  // true = only drawn in Edit mode (default); false = always drawn
         std::function<void(bool& visible)> draw;
         std::string id;   // stable ImGui id, assigned by registerWindow() if empty
     };
@@ -105,11 +106,77 @@ public:
     void setEditMode(bool on)  { m_editMode = on; }
 
     // -------------------------------------------------------------------------
+    // Built-in panel registration
+    // -------------------------------------------------------------------------
+    // By default Runtime::onSetup automatically registers all built-in panels
+    // (Toolbar, Scene, Properties, Code Editor, etc.).  Apps that want explicit
+    // control over which panels are present can call
+    //   setAutoRegisterBuiltIns(false)
+    // before Runtime::attach(), then call registerBuiltInWindows() themselves
+    // at the appropriate point in setup().
+    bool autoRegisterBuiltIns() const { return m_autoRegisterBuiltIns; }
+    void setAutoRegisterBuiltIns(bool v) { m_autoRegisterBuiltIns = v; }
+    void registerBuiltInWindows();
+
+    // -------------------------------------------------------------------------
+    // Dockspace central node — passthrough vs opaque
+    // -------------------------------------------------------------------------
+    // By default the central dockspace node is transparent (PassthruCentralNode),
+    // which lets the raw OpenGL scene show through the gap between docked panels.
+    // Apps that render exclusively inside ImGui windows (no raw 3-D scene) should
+    // call setPassthruCentralNode(false) in setup() so the central area is an
+    // opaque, dockable surface instead of a hole.
+    bool passthruCentralNode() const { return m_passthruCentralNode; }
+    void setPassthruCentralNode(bool passthru) { m_passthruCentralNode = passthru; }
+
+    // -------------------------------------------------------------------------
     // Rulers
     // -------------------------------------------------------------------------
     bool showRulers()         const { return m_showRulers; }
     void setShowRulers(bool v)      { m_showRulers = v; }
     void toggleRulers()             { m_showRulers = !m_showRulers; }
+
+    // -------------------------------------------------------------------------
+    // App preferences (read-only access for callers such as ruler overlays)
+    // -------------------------------------------------------------------------
+    // App-wide openFrameworks preferences (circle resolution, FPS, bg colour, …)
+    struct AppPrefs {
+        bool    initialized    {false};
+        int     circleRes      {22};
+        int     targetFps      {60};
+        bool    vsync          {true};
+        bool    backgroundAuto {true};
+        ofColor bgColor        {18, 18, 24, 255};
+        float   lineWidth      {1.f};
+        bool    smoothLighting {true};
+        bool    depthTest      {false};
+        int     logLevel       {1};   // 0=Verbose 1=Notice 2=Warning 3=Error 4=Fatal 5=Silent
+        float   rulerScale     {1.0f};
+
+        // Unit shown on per-panel rulers (full-window rulers always show pixels).
+        // Custom lets callers override pixPerUnit / unitLabel without touching prefs.
+        enum class RulerUnit { Pixels, Millimetres, Custom };
+        RulerUnit   rulerUnit       {RulerUnit::Pixels};
+
+        // Margin overlay (drawn by panels via ofkitty::drawMarginRect).
+        // Colour and visibility are global so every example/panel using the
+        // helper renders margins consistently. Sizes (e.g. paper margin in mm)
+        // remain per-document and live with the engine, not here.
+        bool    showMarginRect {true};
+        ofColor marginColor    {180, 90, 220, 200};   ///< default purple
+
+        // When true, Tab / Ctrl+E also hides the menu bar and status bar
+        // (not just the edit-mode windows) when leaving edit mode.
+        bool    hideAllUI      {false};
+    };
+
+    const AppPrefs& appPrefs() const { return m_prefs; }
+
+    // ---- Margin overlay (AppPrefs-backed; setters persist) ----
+    bool           showMarginRect()                     const { return m_prefs.showMarginRect; }
+    void           setShowMarginRect(bool v)                  { m_prefs.showMarginRect = v; saveAppPrefs(); }
+    const ofColor& marginColor()                        const { return m_prefs.marginColor; }
+    void           setMarginColor(const ofColor& c)           { m_prefs.marginColor = c;    saveAppPrefs(); }
 
     // -------------------------------------------------------------------------
     // Viewport windows — independent FBO-based scene views
@@ -154,6 +221,7 @@ public:
         float       distance  = 500.f;
         glm::vec3   target    = {0.f, 0.f, 0.f};
         bool        showGizmo = true;
+        bool        showRulers = false;
         ofFbo       fbo;
         ofCamera    cam;
         glm::vec2   lastPanelSize = {0.f, 0.f};
@@ -171,6 +239,36 @@ public:
 
     /// Remove a viewport panel by title. No-op if not found.
     void removeViewportWindow(const std::string& title);
+
+    // -------------------------------------------------------------------------
+    // Built-in window registration
+    // -------------------------------------------------------------------------
+    // By default all built-in windows are registered automatically at startup.
+    // Call any of these in setup() or main.cpp before ofRunApp() to override.
+    //
+    //   runtime().disableBuiltInWindows();          // register none
+    //   runtime().enableBuiltInWindows();           // Scene + Properties only
+    //   runtime().enableBuiltInWindow("Scene");     // one at a time (additive)
+    //   runtime().enableBuiltInWindow("Toolbar");
+    //   runtime().enableAllBuiltInWindows();        // all (explicit default)
+    //
+    // Accepted names: "Toolbar", "Scene", "Properties", "Shortcuts",
+    //                 "Preferences", "Code Editor", "Path Editor"
+    // Stable IDs (e.g. "ofxkit.window.scene") are also accepted.
+    // -------------------------------------------------------------------------
+
+    /// Register none of the built-in windows.
+    void disableBuiltInWindows();
+
+    /// Register one specific built-in window by display name or stable ID.
+    /// Implicitly disables auto-registration of all others.
+    void enableBuiltInWindow(const std::string& nameOrId);
+
+    /// Register the standard set: Scene (left) and Properties (right).
+    void enableBuiltInWindows();
+
+    /// Register all built-in windows (same as the default behaviour).
+    void enableAllBuiltInWindows();
 
     // -------------------------------------------------------------------------
     // Selection
@@ -328,13 +426,15 @@ public:
     // Code Editor — powered by ofxImGuiTextEdit
     // -------------------------------------------------------------------------
     // The Code Editor is a built-in dockable window (View > Code Editor).
-    // It supports syntax highlighting for C++, GLSL, Lua, Python and more.
+    // It supports syntax highlighting for C++, GLSL, Lua, Python, G-code and more.
     //
-    // You can seed the editor with text from your app:
-    //   runtime().codeEditorSetText(myShaderSource);
+    // Seed the editor with text — optionally set language in one call:
+    //   runtime().codeEditorSetText(gcodeStr, TextEditor::LanguageDefinitionId::Gcode);
     //   runtime().codeEditorSetLanguage(TextEditor::LanguageDefinitionId::Glsl);
     // -------------------------------------------------------------------------
-    void          codeEditorSetText(const std::string& text);
+    void          codeEditorSetText(const std::string& text,
+                                    TextEditor::LanguageDefinitionId lang
+                                        = TextEditor::LanguageDefinitionId::None);
     std::string   codeEditorGetText() const;
     void          codeEditorSetLanguage(TextEditor::LanguageDefinitionId lang);
 
@@ -365,6 +465,16 @@ public:
     /// applied when the default layout is built (no imgui.ini on first run, or
     /// after View ▸ Reset Layout).
     void addDefaultLayoutLeftDock(std::string imguiWindowTitle);
+
+    /// Same as addDefaultLayoutLeftDock, but for the right split (Properties /
+    /// Shortcuts / Preferences stack). Call after registerWindow().
+    void addDefaultLayoutRightDock(std::string imguiWindowTitle);
+
+    /// Same as addDefaultLayoutLeftDock, but docks the window into the central
+    /// node (the area between the left and right splits). When at least one
+    /// window is seeded here the central node's NoTabBar flag is cleared so
+    /// the tab bar / title bar is visible. Call after registerWindow().
+    void addDefaultLayoutCenterDock(std::string imguiWindowTitle);
 
     // -------------------------------------------------------------------------
     // Preference pages — two-pane category/page Preferences window
@@ -502,7 +612,6 @@ private:
 
     void drawOverlay();
     void renderMainMenuBar();
-    void registerBuiltInWindows();
     void drawSceneWindow(bool& visible);
     void drawPropertiesWindow(bool& visible);
     void drawShortcutsWindow(bool& visible);
@@ -519,21 +628,6 @@ private:
     void registerBuiltInComponents();
     void drawStatusBar();
     void buildDefaultDockLayout(ImGuiID dockId);
-
-    // App-wide openFrameworks preferences (circle resolution, FPS, bg colour, …)
-    struct AppPrefs {
-        bool    initialized    {false};
-        int     circleRes      {22};
-        int     targetFps      {60};
-        bool    vsync          {true};
-        bool    backgroundAuto {true};
-        ofColor bgColor        {18, 18, 24, 255};
-        float   lineWidth      {1.f};
-        bool    smoothLighting {true};
-        bool    depthTest      {false};
-        int     logLevel       {1};   // 0=Verbose 1=Notice 2=Warning 3=Error 4=Fatal 5=Silent
-        float   rulerScale     {1.0f};
-    };
 
     void drawPreferencesWindow(bool& visible);
     void drawRulers();
@@ -563,6 +657,9 @@ private:
     void drawGizmoInViewport(ViewportInstance& vp, const ofRectangle& imgScreenRect);
 
     bool             m_editMode  {false};
+    bool             m_autoRegisterBuiltIns {true};
+    std::unordered_set<std::string> m_requestedBuiltInWindows;
+    bool             m_passthruCentralNode {true};
     int              m_toggleEditLastFrame {-1};
     bool             m_attached  {false};
     bool             m_skipShortcutDispatch {false};
@@ -578,6 +675,8 @@ private:
     std::string      m_imguiIniPath;
     std::vector<RuntimeWindow> m_windows;
     std::vector<std::string>   m_defaultLayoutExtraLeftDocks;
+    std::vector<std::string>   m_defaultLayoutExtraRightDocks;
+    std::vector<std::string>   m_defaultLayoutExtraCenterDocks;
     // Visibility states loaded from disk before windows are registered.
     // registerWindow() applies the saved state so addon windows also restore.
     std::unordered_map<std::string, bool> m_savedWindowVisibility;

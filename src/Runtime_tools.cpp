@@ -1,6 +1,7 @@
 #include "Runtime.h"
 #include "panels/CodeEditorPanel.h"
 #include "panels/PathEditorPanel.h"
+#include "RulerUtil.h"
 
 #include <ofxEnTTKit/src/ofxEnTTKit.h>
 #include <ofxImGui/src/ofxImGui.h>
@@ -181,10 +182,11 @@ void Runtime::drawGizmoInViewport(ViewportInstance& vp, const ofRectangle& imgSc
     ImGuizmo::SetAlternativeWindow(nullptr);
 }
 
-void Runtime::codeEditorSetText(const std::string& text)
+void Runtime::codeEditorSetText(const std::string& text,
+                                TextEditor::LanguageDefinitionId lang)
 {
     if (m_codeEditor)
-        m_codeEditor->setText(text);
+        m_codeEditor->setText(text, lang);
 }
 
 std::string Runtime::codeEditorGetText() const
@@ -320,7 +322,8 @@ void Runtime::drawViewportWindow(ViewportInstance& vp, bool& visible)
             ImGui::SetNextItemWidth(110.f);
             ImGui::DragFloat("Distance", &vp.distance, 5.f, 10.f, 5000.f, "%.0f");
             ImGui::Separator();
-            ImGui::MenuItem("Show Gizmo", nullptr, &vp.showGizmo);
+            ImGui::MenuItem("Show Gizmo",  nullptr, &vp.showGizmo);
+            ImGui::MenuItem("Show Rulers", nullptr, &vp.showRulers);
             ImGui::EndMenu();
         }
         ImGui::EndMenuBar();
@@ -375,10 +378,13 @@ void Runtime::drawViewportWindow(ViewportInstance& vp, bool& visible)
     ofDisableDepthTest();
     vp.fbo.end();
 
-    const auto& tex         = vp.fbo.getTexture();
+    const auto& tex          = vp.fbo.getTexture();
     ImVec2      imgPosScreen = ImGui::GetCursorScreenPos();
     if (tex.getTextureData().textureTarget == GL_TEXTURE_2D) {
-        ofxImGui::AddImage(tex, glm::vec2(avail.x, avail.y));
+        // OpenGL FBOs are stored bottom-up; flip the V axis so the image
+        // appears right-side up in ImGui's top-down coordinate system.
+        ImTextureID tid = GetImTextureID(tex);
+        ImGui::Image(tid, ImVec2(avail.x, avail.y), ImVec2(0, 1), ImVec2(1, 0));
     } else {
         ImGui::TextDisabled("Viewport texture is not GL_TEXTURE_2D.");
         ImGui::TextDisabled("textureTarget: 0x%X", tex.getTextureData().textureTarget);
@@ -388,6 +394,16 @@ void Runtime::drawViewportWindow(ViewportInstance& vp, bool& visible)
         const ofRectangle imgScreenRect(imgPosScreen.x, imgPosScreen.y, avail.x,
                                         avail.y);
         drawGizmoInViewport(vp, imgScreenRect);
+    }
+
+    if (vp.showRulers) {
+        drawRulersInRegion(
+            ImGui::GetWindowDrawList(),
+            imgPosScreen,
+            avail,
+            ImGui::GetIO().MousePos,
+            1.0f, "px",
+            m_uiScale, m_prefs.rulerScale, nullptr, ImVec2(0.f, 0.f));
     }
 
     const bool gizmoWantsInput =

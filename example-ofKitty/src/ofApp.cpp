@@ -19,10 +19,6 @@ void ofApp::setup() {
     // over selected entities in the main OF scene.
     runtime().setSceneCamera(&m_cam);
 
-    // TAB as an alias for the built-in CTRL/CMD+E toggle.
-    runtime().keys().bind(OF_KEY_TAB, 0, "Toggle Edit mode (TAB)",
-                          [] { runtime().toggleEditMode(); });
-
     // "Scene" top-level menu group injected between the app menu and View.
     runtime().addMenuBarGroup("Scene", [this] {
         if (ImGui::BeginMenu("Add Entity")) {

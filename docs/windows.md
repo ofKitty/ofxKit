@@ -98,14 +98,27 @@ if (win) win->visible = !win->visible;
 
 Built-ins are implemented on top of the same registration pipeline (internally they use **`KitRegisteredWindow`**-style types so behaviour stays aligned with **ofxBapp** window classes).
 
-| Name | editModeOnly | Description |
-|---|---|---|
-| `Toolbar` | false | Floating tool-picker panel (see [toolbar.md](toolbar.md)) |
-| `Scene` | true | Entity list for the attached EnTT registry |
-| `Properties` | true | Component inspector for the selected entity |
-| `Shortcuts` | true | Editable keyboard shortcut list |
-| `Preferences` | true | App / editor preferences (see [preferences.md](preferences.md)) |
-| `Code Editor` | true | Text editor panel (ofxImGuiTextEdit) |
-| `Path Editor` | true | Vector path editor panel |
+| Name | Stable ID | editModeOnly | Description |
+|---|---|---|---|
+| `Toolbar` | `ofxkit.window.toolbar` | false | Floating tool-picker panel (see [toolbar.md](toolbar.md)) |
+| `Scene` | `ofxkit.window.scene` | true | Entity list for the attached EnTT registry |
+| `Properties` | `ofxkit.window.properties` | true | Component inspector for the selected entity |
+| `Shortcuts` | `ofxkit.window.shortcuts` | true | Editable keyboard shortcut list |
+| `Preferences` | `ofxkit.window.preferences` | true | App / editor preferences (see [preferences.md](preferences.md)) |
+| `Code Editor` | `ofxkit.window.code_editor` | true | Text editor panel (ofxImGuiTextEdit) |
+| `Path Editor` | `ofxkit.window.path_editor` | true | Vector path editor panel |
 
-The Toolbar is always drawn because tools need to be accessible outside Edit mode.
+By default all built-ins are registered automatically. Call any of the following in `setup()` or `main.cpp` before `ofRunApp()` to change that:
+
+```cpp
+runtime().disableBuiltInWindows();        // register none
+
+runtime().enableBuiltInWindows();         // Scene + Properties only (standard set)
+
+runtime().enableBuiltInWindow("Scene");   // one at a time — additive,
+runtime().enableBuiltInWindow("Toolbar"); // implicitly disables all others
+
+runtime().enableAllBuiltInWindows();      // all (explicit default)
+```
+
+Both the display name (e.g. `"Scene"`) and the stable ID (e.g. `"ofxkit.window.scene"`) are accepted by `enableBuiltInWindow()`.

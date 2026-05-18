@@ -25,3 +25,15 @@
 // them (WantCaptureMouse / WantCaptureKeyboard).  Without this, the camera
 // and other OF input handlers fight with ImGui for every drag and click.
 #include <ofxImGui/src/GuiEventHelper.h>
+
+// Generic named-layer stack + ImGui panel widget
+#include "LayerStack.h"
+
+// ECS-based layer panel — works with any registry tagged with ecs::layer_component
+#include "panels/LayersPanel.h"
+
+// Generic resource browser panel (images, SVGs, G-code snippets)
+#include "panels/ResourcesPanel.h"
+
+// Generic drag-and-drop reorder / reparent helper (3-zone: Before / Into / After)
+#include "ReorderDragDrop.h"

@@ -158,6 +158,16 @@ void Runtime::onSetup(ofEventArgs&)
         "Toggle Edit mode",
         [this] { toggleEditMode(); });
 
+    m_shortcuts.registerAction(
+        "ofkitty.toggle_edit_tab",
+        OF_KEY_TAB,
+        0,
+        "Toggle Edit mode (Tab)",
+        [this] {
+            if (!ImGui::GetIO().WantCaptureKeyboard)
+                toggleEditMode();
+        });
+
     // Gizmo operation shortcuts (only fire when edit mode is active)
     m_shortcuts.registerAction("ofkitty.gizmo_translate", 'w', 0,
                                "Gizmo: Translate",
@@ -217,6 +227,30 @@ void Runtime::toggleEditMode()
     ofLogNotice("ofxKit") << "Edit mode " << (m_editMode ? "ON" : "OFF");
 }
 
+void Runtime::disableBuiltInWindows()
+{
+    m_autoRegisterBuiltIns = false;
+    m_requestedBuiltInWindows.clear();
+}
+
+void Runtime::enableBuiltInWindow(const std::string& nameOrId)
+{
+    m_autoRegisterBuiltIns = false;
+    m_requestedBuiltInWindows.insert(nameOrId);
+}
+
+void Runtime::enableBuiltInWindows()
+{
+    enableBuiltInWindow("Scene");
+    enableBuiltInWindow("Properties");
+}
+
+void Runtime::enableAllBuiltInWindows()
+{
+    m_autoRegisterBuiltIns = true;
+    m_requestedBuiltInWindows.clear();
+}
+
 void Runtime::onDraw(ofEventArgs&)
 {
     if (m_windows.empty())
@@ -248,20 +282,34 @@ void Runtime::drawOverlay()
 {
     m_gui.begin();
 
-    if (m_editMode) {
-        ImGuizmo::BeginFrame();
+    // Menu bar — hidden when hideAllUI is set and edit mode is off, so the
+    // user gets a completely clean view.  Always shown in edit mode so they
+    // can re-enter it and reach app-specific menus.
+    if (!m_prefs.hideAllUI || m_editMode)
         renderMainMenuBar();
-    }
 
-    // Always reserve the bottom status strip (progress, optional hints, FPS when visible, …).
-    drawStatusBar();
+    if (m_editMode)
+        ImGuizmo::BeginFrame();
 
-    if (m_editMode) {
+    // Status bar — follows the same hide-all-UI rule as the menu bar.
+    if (!m_prefs.hideAllUI || m_editMode)
+        drawStatusBar();
 
+    // The dockspace is created unconditionally on every frame so that ImGui's
+    // saved-ini dock state (node IDs, splits, window positions) is always
+    // backed by a live dockspace.  Without this, ImGui loads the dock nodes
+    // from the .ini file but never finds the host window, which can leave
+    // orphaned nodes in an inconsistent state and segfault on early frames.
+    //
+    // In non-edit mode the central node is forced to PassthruCentralNode so
+    // the OF background renders through cleanly; in edit mode the app's own
+    // m_passthruCentralNode preference is honoured.
+    {
+        ImGuiDockNodeFlags dsFlags = ImGuiDockNodeFlags_NoDockingOverCentralNode;
+        if (!m_editMode || m_passthruCentralNode)
+            dsFlags |= ImGuiDockNodeFlags_PassthruCentralNode;
         ImGuiID dockId = ImGui::DockSpaceOverViewport(
-            0, ImGui::GetMainViewport(),
-            ImGuiDockNodeFlags_PassthruCentralNode |
-                ImGuiDockNodeFlags_NoDockingOverCentralNode);
+            0, ImGui::GetMainViewport(), dsFlags);
 
         if (!m_defaultLayoutBuilt) {
             bool noIni = true;
@@ -276,15 +324,21 @@ void Runtime::drawOverlay()
         }
 
         if (ImGuiDockNode* cn = ImGui::DockBuilderGetCentralNode(dockId)) {
-            cn->LocalFlags |= ImGuiDockNodeFlags_PassthruCentralNode |
-                              ImGuiDockNodeFlags_NoDockingOverCentralNode |
-                              ImGuiDockNodeFlags_NoTabBar;
+            // Only suppress the tab bar when no app windows are seeded into the
+            // central node. When a window like Preview is docked there it needs
+            // its own title/menu bar to be visible.
+            if (m_defaultLayoutExtraCenterDocks.empty())
+                cn->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
+            if (!m_editMode || m_passthruCentralNode)
+                cn->LocalFlags |= ImGuiDockNodeFlags_PassthruCentralNode
+                               |  ImGuiDockNodeFlags_NoDockingOverCentralNode;
         }
 
-        if (m_showRulers)
-            drawRulers();
-
-        drawGizmoOverlay();
+        if (m_editMode) {
+            if (m_showRulers)
+                drawRulers();
+            drawGizmoOverlay();
+        }
     }
 
     for (auto& window : m_windows) {
@@ -406,16 +460,18 @@ void Runtime::renderMainMenuBar()
                         saveAppPrefs();
                 }
             }
-            ImGui::Separator();
-            if (ImGui::MenuItem("New Scene View")) {
-                addViewportWindow();
-            }
-            ImGui::Separator();
-            ImGui::MenuItem("Rulers", "F2", &m_showRulers);
-            ImGui::Separator();
-            if (ImGui::MenuItem("Reset Layout")) {
-                m_defaultLayoutBuilt = false;
-                m_layoutResetPending = true;
+            if (m_editMode) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("New Scene View")) {
+                    addViewportWindow();
+                }
+                ImGui::Separator();
+                ImGui::MenuItem("Rulers", "F2", &m_showRulers);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Reset Layout")) {
+                    m_defaultLayoutBuilt = false;
+                    m_layoutResetPending = true;
+                }
             }
             ImGui::EndMenu();
         }
@@ -494,6 +550,28 @@ void Runtime::addDefaultLayoutLeftDock(std::string imguiWindowTitle)
             return;
     }
     m_defaultLayoutExtraLeftDocks.push_back(std::move(imguiWindowTitle));
+}
+
+void Runtime::addDefaultLayoutRightDock(std::string imguiWindowTitle)
+{
+    if (imguiWindowTitle.empty())
+        return;
+    for (const auto& existing : m_defaultLayoutExtraRightDocks) {
+        if (existing == imguiWindowTitle)
+            return;
+    }
+    m_defaultLayoutExtraRightDocks.push_back(std::move(imguiWindowTitle));
+}
+
+void Runtime::addDefaultLayoutCenterDock(std::string imguiWindowTitle)
+{
+    if (imguiWindowTitle.empty())
+        return;
+    for (const auto& existing : m_defaultLayoutExtraCenterDocks) {
+        if (existing == imguiWindowTitle)
+            return;
+    }
+    m_defaultLayoutExtraCenterDocks.push_back(std::move(imguiWindowTitle));
 }
 
 void Runtime::addMenuBarGroup(const std::string& groupName, MenuBarCallback cb)
