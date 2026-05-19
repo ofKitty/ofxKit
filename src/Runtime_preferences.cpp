@@ -1,8 +1,8 @@
 #include "Runtime.h"
 #include "Runtime_private.h"
 
-#include <ofxImGuiStyle/src/ofxImGuiStyle.h>
-
+#include <ofxImGuiStyle/src/ImTheme.h>
+#include <ofxImGuiStyle/src/ImThemeRegistry.h>
 #include "imgui_internal.h"
 
 #include <ofMain.h>
@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 
 namespace ofkitty {
@@ -42,6 +43,36 @@ bool Runtime::unregisterPreferencePage(const std::string& id)
     return true;
 }
 
+void Runtime::registerPrefSerializer(std::string id,
+                                     std::function<void(ofJson&)>       save,
+                                     std::function<void(const ofJson&)> load)
+{
+    if (id.empty()) {
+        ofLogWarning("ofxKit") << "Cannot register a pref serializer with no id.";
+        return;
+    }
+    // Re-registering the same id replaces the previous entry (e.g. hot-reload
+    // of an addon during the same session).
+    auto it = std::find_if(m_prefSerializers.begin(), m_prefSerializers.end(),
+                           [&](const PrefSerializer& s) { return s.id == id; });
+    if (it != m_prefSerializers.end()) {
+        it->save = std::move(save);
+        it->load = std::move(load);
+        return;
+    }
+    m_prefSerializers.push_back({std::move(id), std::move(save), std::move(load)});
+}
+
+bool Runtime::unregisterPrefSerializer(const std::string& id)
+{
+    auto it = std::find_if(m_prefSerializers.begin(), m_prefSerializers.end(),
+                           [&](const PrefSerializer& s) { return s.id == id; });
+    if (it == m_prefSerializers.end())
+        return false;
+    m_prefSerializers.erase(it);
+    return true;
+}
+
 void Runtime::registerBuiltInPreferencePages()
 {
     if (m_builtInPreferencePagesRegistered)
@@ -68,6 +99,10 @@ void Runtime::registerBuiltInPreferencePages()
                             "Status Bar",
                             "ofxkit.prefs.statusbar",
                             [this] { drawPrefsStatusBar(); }});
+    registerPreferencePage({"openFrameworks",
+                            "Audio",
+                            "ofxkit.prefs.audio",
+                            [this] { drawPrefsAudio(); }});
 }
 
 void Runtime::drawPreferencePageList()
@@ -115,24 +150,25 @@ void Runtime::drawPreferencePageContent()
 
 void Runtime::drawPrefsAppearance()
 {
-    ImGui::SeparatorText("Theme");
-    if (ImGui::Button("Dark"))
-        setTheme(Theme::Dark);
-    ImGui::SameLine();
-    if (ImGui::Button("Light"))
-        setTheme(Theme::Light);
-    ImGui::SameLine();
-    if (ImGui::Button("Classic"))
-        setTheme(Theme::Classic);
-    ImGui::SameLine();
-    if (ImGui::Button("Random \xef\x8b\x8b")) {
-        ofxImGuiStyle::applyRandomAccentTheme();
-        m_style.captureBaseStyle();
+    // ---- Theme selector --------------------------------------------------
+    // Combined picker (vendored ImTheme built-ins on top, custom-registered
+    // themes from ofxKit / instrument addons below).
+    {
+        std::string id = m_themeId;
+        if (ImTheme::ShowSelector(id))
+            setTheme(id);
+    }
+
+    if (ImGui::Button("Randomise Accent \xef\x95\xa2")) {
+        ImTheme::ApplyRandomAccent();
+        ImTheme::CaptureBaseStyle();
         applyUIScale();
     }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Randomise the accent colour");
+        ImGui::SetTooltip("Reset to ImGui dark + random accent colour\n"
+                          "(does not change the selected theme id)");
 
+    // ---- UI Scale --------------------------------------------------------
     ImGui::SeparatorText("UI Scale");
     float scale = m_uiScale;
     ImGui::SetNextItemWidth(220.f);
@@ -142,35 +178,37 @@ void Runtime::drawPrefsAppearance()
     if (ImGui::Button("Auto"))
         setUIScale(detectUIScale());
 
-    ImGui::SeparatorText("Theme File");
-    ImGui::TextDisabled("Themes are saved as .bin files (binary ImGuiStyle snapshot).");
-    if (ImGui::Button("Save Theme As...")) {
+    // ---- Style snapshot .bin --------------------------------------------
+    ImGui::SeparatorText("Style Snapshot");
+    ImGui::TextDisabled("Save / load the live ImGuiStyle as a .bin file.");
+    if (ImGui::Button("Save Style As...")) {
         saveFileDialog(
             "save_theme",
-            "Save Theme",
+            "Save Style",
             ".bin",
-            "my_theme.bin",
+            "my_style.bin",
             [this](const std::string& path) {
                 std::string p = path;
                 if (p.size() < 4 || p.substr(p.size() - 4) != ".bin")
                     p += ".bin";
-                ofxImGuiStyle::saveTheme(p);
+                ImTheme::SaveStyle(p.c_str());
             });
     }
     ImGui::SameLine();
-    if (ImGui::Button("Load Theme...")) {
-        openFileDialog("load_theme", "Load Theme", ".bin",
+    if (ImGui::Button("Load Style...")) {
+        openFileDialog("load_theme", "Load Style", ".bin",
                        [this](const std::string& path) {
-                           if (ofxImGuiStyle::loadTheme(path)) {
-                               ofxImGuiStyle::applyCompactMetrics();
-                               m_style.captureBaseStyle();
+                           if (ImTheme::LoadStyle(path.c_str())) {
+                               ImTheme::ApplyCompactMetrics();
+                               ImTheme::CaptureBaseStyle();
                                applyUIScale();
                            }
                        });
     }
 
-    ImGui::SeparatorText("Edit Mode Toggle");
-    ImGui::TextDisabled("Controls what Tab / Ctrl+E hides when leaving edit mode.");
+    // ---- Ctrl+E behaviour ------------------------------------------------
+    ImGui::SeparatorText("Ctrl+E Behaviour");
+    ImGui::TextDisabled("Tab always hides/shows windows only (menu bar stays).");
     bool hideAll = m_prefs.hideAllUI;
     if (ImGui::RadioButton("Hide windows only", !hideAll)) {
         m_prefs.hideAllUI = false;
@@ -181,9 +219,15 @@ void Runtime::drawPrefsAppearance()
         m_prefs.hideAllUI = true;
         saveAppPrefs();
     }
+    ImGui::TextDisabled("Ctrl+E - %s", hideAll ? "hides windows + menu bar + status bar"
+                                                : "hides windows only (same as Tab)");
 
-    ImGui::SeparatorText("Style Editor");
-    ImGui::ShowStyleEditor();
+    // ---- Tweak / style editor -------------------------------------------
+    ImGui::SeparatorText("Tweak / Style Editor");
+    // Tabbed "Theme Tweaks" + "Style Editor" from ImTheme (formerly
+    // ImGui::ShowStyleEditor with extra HSV/rounding tweak sliders).
+    static ImTheme::TweakedTheme s_tweak;
+    ImTheme::ShowThemeTweakGui(&s_tweak);
 }
 
 void Runtime::drawPrefsGeneral()
@@ -274,37 +318,8 @@ void Runtime::drawPrefsGeneral()
         ImGui::Spacing();
     }
 
-    if (ImGui::CollapsingHeader("Margin overlay")) {
-        if (ImGui::Checkbox("Show margin rectangle", &m_prefs.showMarginRect))
-            saveAppPrefs();
-        ImGui::SetItemTooltip(
-            "Draw the printable / safe area inside the canvas in panels\n"
-            "that opt in via ofkitty::drawMarginRect().");
-
-        float col[4] = {
-            m_prefs.marginColor.r / 255.f,
-            m_prefs.marginColor.g / 255.f,
-            m_prefs.marginColor.b / 255.f,
-            m_prefs.marginColor.a / 255.f,
-        };
-        if (ImGui::ColorEdit4("Margin Colour", col)) {
-            m_prefs.marginColor.set(
-                static_cast<unsigned char>(col[0] * 255.f),
-                static_cast<unsigned char>(col[1] * 255.f),
-                static_cast<unsigned char>(col[2] * 255.f),
-                static_cast<unsigned char>(col[3] * 255.f));
-            saveAppPrefs();
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Reset##marginColor")) {
-            m_prefs.marginColor.set(180, 90, 220, 200);
-            saveAppPrefs();
-        }
-        ImGui::TextDisabled(
-            "Distinct colour (default purple) so margins are visually\n"
-            "separable from cyan draggable guides.");
-        ImGui::Spacing();
-    }
+    // Margin overlay used to live here; it has moved to its own addon. Register
+    // a prefs page from that addon with runtime().registerPreferencePage(...).
 }
 
 void Runtime::drawPrefsRendering()
@@ -373,6 +388,220 @@ void Runtime::drawPrefsStatusBar()
     }
 }
 
+void Runtime::drawPrefsAudio()
+{
+    // ---- Device list (probe only once; ASIO enumeration is very slow) ------
+    if (m_audioDeviceListDirty) {
+        m_audioDeviceListDirty = false;
+        m_cachedAudioDevices.clear();
+        ofSoundStream probe;
+        for (auto& d : probe.getDeviceList()) {
+            m_cachedAudioDevices.push_back({
+                d.name,
+                static_cast<int>(d.inputChannels),
+                static_cast<int>(d.outputChannels)
+            });
+        }
+    }
+
+    // ---- Output device -------------------------------------------------------
+    if (ImGui::CollapsingHeader("Devices", ImGuiTreeNodeFlags_DefaultOpen)) {
+
+        ImGui::SetNextItemWidth(-1.f);
+        const char* outLabel = m_prefs.audioOutputDevice.empty()
+                                   ? "(system default)"
+                                   : m_prefs.audioOutputDevice.c_str();
+        if (ImGui::BeginCombo("##out_dev", outLabel)) {
+            if (ImGui::Selectable("(system default)", m_prefs.audioOutputDevice.empty())) {
+                m_prefs.audioOutputDevice = "";
+                saveAppPrefs();
+            }
+            for (auto& d : m_cachedAudioDevices) {
+                if (d.outputChannels == 0) continue;
+                bool sel = (d.name == m_prefs.audioOutputDevice);
+                if (ImGui::Selectable(d.name.c_str(), sel)) {
+                    m_prefs.audioOutputDevice = d.name;
+                    saveAppPrefs();
+                }
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine(0, 4.f);
+        ImGui::TextDisabled("Output");
+
+        ImGui::SetNextItemWidth(-1.f);
+        const char* inLabel = m_prefs.audioInputDevice.empty()
+                                  ? "(none)"
+                                  : m_prefs.audioInputDevice.c_str();
+        if (ImGui::BeginCombo("##in_dev", inLabel)) {
+            if (ImGui::Selectable("(none)", m_prefs.audioInputDevice.empty())) {
+                m_prefs.audioInputDevice = "";
+                saveAppPrefs();
+            }
+            for (auto& d : m_cachedAudioDevices) {
+                if (d.inputChannels == 0) continue;
+                bool sel = (d.name == m_prefs.audioInputDevice);
+                if (ImGui::Selectable(d.name.c_str(), sel)) {
+                    m_prefs.audioInputDevice = d.name;
+                    saveAppPrefs();
+                }
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine(0, 4.f);
+        ImGui::TextDisabled("Input");
+
+        if (ImGui::Button("Refresh Devices")) {
+            m_audioDeviceListDirty = true;
+        }
+        ImGui::Spacing();
+    }
+
+    // ---- Format ---------------------------------------------------------------
+    if (ImGui::CollapsingHeader("Format", ImGuiTreeNodeFlags_DefaultOpen)) {
+
+        static const int   kRates[]  = {44100, 48000, 88200, 96000};
+        static const char* kRateStrs[] = {"44100 Hz", "48000 Hz", "88200 Hz", "96000 Hz"};
+        int rateIdx = 0;
+        for (int i = 0; i < 4; ++i)
+            if (kRates[i] == m_prefs.audioSampleRate) { rateIdx = i; break; }
+
+        ImGui::SetNextItemWidth(140.f);
+        if (ImGui::Combo("Sample Rate", &rateIdx, kRateStrs, 4)) {
+            m_prefs.audioSampleRate = kRates[rateIdx];
+            saveAppPrefs();
+        }
+
+        static const int   kBufs[]     = {64, 128, 256, 512, 1024, 2048};
+        static const char* kBufStrs[]  = {"64", "128", "256", "512", "1024", "2048"};
+        int bufIdx = 3; // default 512
+        for (int i = 0; i < 6; ++i)
+            if (kBufs[i] == m_prefs.audioBufferSize) { bufIdx = i; break; }
+
+        ImGui::SetNextItemWidth(140.f);
+        if (ImGui::Combo("Buffer Size", &bufIdx, kBufStrs, 6)) {
+            m_prefs.audioBufferSize = kBufs[bufIdx];
+            saveAppPrefs();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("samples  (~%.1f ms @ %d Hz)",
+            1000.0 * m_prefs.audioBufferSize / m_prefs.audioSampleRate,
+            m_prefs.audioSampleRate);
+
+        ImGui::Spacing();
+    }
+
+    // ---- Stream control ------------------------------------------------------
+    // Master volume used to live here; it has moved out of ofxKit so each app
+    // can keep volume next to its own audio graph (see ofxBapp::AppSettings,
+    // ofxAcidBox::ofxAcidBoxEngine::masterVolume, etc.). Addons can still add
+    // a slider here by registering their own prefs page.
+    if (ImGui::CollapsingHeader("Stream Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+
+        ImGui::TextDisabled("Changes to device / format require a stream restart.");
+        ImGui::Spacing();
+
+        if (ImGui::Button("Apply & Restart Audio")) {
+            if (m_audioRestartCallback) {
+                m_audioRestartCallback();
+            } else {
+                ofLogWarning("ofxKit") << "No audio restart callback registered. "
+                    "Call runtime().setAudioRestartCallback() from your ofApp::setup().";
+            }
+            m_audioDeviceListDirty = true;
+            saveAppPrefs();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(m_audioRestartCallback
+                ? "Restart the audio stream with the current settings."
+                : "Register a callback with runtime().setAudioRestartCallback()\nto enable stream restart from here.");
+
+        if (!m_audioRestartCallback) {
+            ImGui::SameLine();
+            ImGui::TextColored({1.f, 0.65f, 0.f, 1.f}, "(no callback registered)");
+        }
+        ImGui::Spacing();
+    }
+
+    // ---- Test Signal --------------------------------------------------------
+    if (ImGui::CollapsingHeader("Test Signal", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextDisabled("Verify audio output is working — like Pure Data's test tones.");
+        ImGui::Spacing();
+
+        // Tone toggle
+        if (m_testToneActive)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.70f, 0.30f, 1.f));
+        if (ImGui::Button(m_testToneActive ? "Tone  ON " : "Tone  OFF"))
+            m_testToneActive = !m_testToneActive;
+        if (m_testToneActive)
+            ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+
+        // Noise toggle
+        if (m_testNoiseActive)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.70f, 0.30f, 1.f));
+        if (ImGui::Button(m_testNoiseActive ? "Noise  ON " : "Noise  OFF"))
+            m_testNoiseActive = !m_testNoiseActive;
+        if (m_testNoiseActive)
+            ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(
+                "Add  runtime().mixTestSignal(buf);  at the end of\n"
+                "your ofApp::audioOut(ofSoundBuffer& buf) callback.");
+
+        ImGui::SetNextItemWidth(200.f);
+        ImGui::SliderFloat("Freq##testtone", &m_testToneFreq, 20.f, 20000.f,
+                           "%.0f Hz", ImGuiSliderFlags_Logarithmic);
+        ImGui::SetNextItemWidth(200.f);
+        ImGui::SliderFloat("Level##testsig", &m_testSignalLevel, 0.f, 1.f, "%.2f");
+
+        if (m_testToneActive || m_testNoiseActive)
+            ImGui::TextColored({1.f, 0.85f, 0.f, 1.f}, "\xef\x80\xa7  TEST SIGNAL ACTIVE");
+
+        ImGui::Spacing();
+    }
+}
+
+void Runtime::mixTestSignal(ofSoundBuffer& buf)
+{
+    if (!m_testToneActive && !m_testNoiseActive)
+        return;
+
+    const double sr          = static_cast<double>(buf.getSampleRate());
+    const int    numChannels = static_cast<int>(buf.getNumChannels());
+    const int    numFrames   = static_cast<int>(buf.getNumFrames());
+    const double phaseInc    = (2.0 * M_PI * static_cast<double>(m_testToneFreq)) / sr;
+    const float  level       = m_testSignalLevel;
+
+    auto& raw = buf.getBuffer();
+
+    for (int f = 0; f < numFrames; ++f) {
+        float s = 0.f;
+
+        if (m_testToneActive) {
+            m_testTonePhase += phaseInc;
+            if (m_testTonePhase >= 2.0 * M_PI)
+                m_testTonePhase -= 2.0 * M_PI;
+            s += static_cast<float>(std::sin(m_testTonePhase));
+        }
+
+        if (m_testNoiseActive) {
+            s += (static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX)) * 2.f - 1.f;
+        }
+
+        s *= level;
+
+        for (int c = 0; c < numChannels; ++c)
+            raw[static_cast<size_t>(f * numChannels + c)] += s;
+    }
+}
+
 void Runtime::registerStatusItem(StatusItem item)
 {
     if (item.id.empty()) {
@@ -427,7 +656,7 @@ void Runtime::registerBuiltInStatusItems()
                             ImGui::TextDisabled("entities: %d",
                                                 static_cast<int>(reg.storage<
                                                                      entt::entity>()
-                                                                     .size()));
+                                                                     .free_list()));
                         }});
     registerStatusItem({"ofxkit.status.fps",
                         "ofxkit.stats",
@@ -621,7 +850,7 @@ void Runtime::drawRulers()
 
 void Runtime::loadAppPrefs()
 {
-    std::string path = ofToDataPath("ofxKit/appPrefs.json", true);
+    std::string path = dataPath("appPrefs.json");
     try {
         std::ifstream in(path);
         if (!in.is_open())
@@ -659,13 +888,30 @@ void Runtime::loadAppPrefs()
                                 static_cast<unsigned char>((int)j["bgB"]),
                                 static_cast<unsigned char>((int)j["bgA"]));
         }
-        if (j.contains("showMarginRect"))
-            m_prefs.showMarginRect = j["showMarginRect"].get<bool>();
-        if (j.contains("marginR")) {
-            m_prefs.marginColor.set(static_cast<unsigned char>((int)j["marginR"]),
-                                    static_cast<unsigned char>((int)j["marginG"]),
-                                    static_cast<unsigned char>((int)j["marginB"]),
-                                    static_cast<unsigned char>((int)j["marginA"]));
+
+        if (j.contains("audioOutputDevice"))
+            m_prefs.audioOutputDevice = j["audioOutputDevice"].get<std::string>();
+        if (j.contains("audioInputDevice"))
+            m_prefs.audioInputDevice = j["audioInputDevice"].get<std::string>();
+        if (j.contains("audioSampleRate"))
+            m_prefs.audioSampleRate = j["audioSampleRate"].get<int>();
+        if (j.contains("audioBufferSize"))
+            m_prefs.audioBufferSize = j["audioBufferSize"].get<int>();
+
+        // Hand the rest of the document to any registered addon serializers
+        // (e.g. ofxMidiKit, the margin overlay owner, ofxBapp master volume).
+        // Failures inside one serializer must not bring down the rest, so each
+        // call is wrapped individually.
+        for (auto& s : m_prefSerializers) {
+            if (!s.load) continue;
+            try { s.load(j); }
+            catch (const std::exception& e) {
+                ofLogWarning("ofxKit")
+                    << "PrefSerializer '" << s.id << "' load() threw: " << e.what();
+            } catch (...) {
+                ofLogWarning("ofxKit")
+                    << "PrefSerializer '" << s.id << "' load() threw unknown exception";
+            }
         }
 
         if (j.contains("windowVisibility") && j["windowVisibility"].is_object()) {
@@ -701,7 +947,7 @@ void Runtime::saveAppPrefs()
         ImGui::SaveIniSettingsToDisk(iniPath);
     }
 
-    std::string path = ofToDataPath("ofxKit/appPrefs.json", true);
+    std::string path = dataPath("appPrefs.json");
     try {
         of::filesystem::create_directories(of::filesystem::path(path).parent_path());
         ofJson j;
@@ -720,11 +966,26 @@ void Runtime::saveAppPrefs()
         j["bgG"]             = static_cast<int>(m_prefs.bgColor.g);
         j["bgB"]             = static_cast<int>(m_prefs.bgColor.b);
         j["bgA"]             = static_cast<int>(m_prefs.bgColor.a);
-        j["showMarginRect"]  = m_prefs.showMarginRect;
-        j["marginR"]         = static_cast<int>(m_prefs.marginColor.r);
-        j["marginG"]         = static_cast<int>(m_prefs.marginColor.g);
-        j["marginB"]         = static_cast<int>(m_prefs.marginColor.b);
-        j["marginA"]         = static_cast<int>(m_prefs.marginColor.a);
+
+        j["audioOutputDevice"] = m_prefs.audioOutputDevice;
+        j["audioInputDevice"]  = m_prefs.audioInputDevice;
+        j["audioSampleRate"]   = m_prefs.audioSampleRate;
+        j["audioBufferSize"]   = m_prefs.audioBufferSize;
+
+        // Let addon serializers contribute their own keys (mirrors the loop in
+        // loadAppPrefs). Wrapped individually so one bad serializer cannot
+        // corrupt the whole file.
+        for (auto& s : m_prefSerializers) {
+            if (!s.save) continue;
+            try { s.save(j); }
+            catch (const std::exception& e) {
+                ofLogWarning("ofxKit")
+                    << "PrefSerializer '" << s.id << "' save() threw: " << e.what();
+            } catch (...) {
+                ofLogWarning("ofxKit")
+                    << "PrefSerializer '" << s.id << "' save() threw unknown exception";
+            }
+        }
 
         ofJson vis = ofJson::object();
         for (const auto& w : m_windows)

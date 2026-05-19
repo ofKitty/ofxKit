@@ -17,7 +17,8 @@ namespace ofkitty {
 //
 // Named actions (registerAction):
 //   - Stable id for JSON load/save and the Shortcuts editor (Edit mode).
-//   - Persisted under data/ofxKit/shortcuts.json by default (auto-save on change).
+//   - Persisted under data/shortcuts.json by default (auto-save on change),
+//     or `data/<dataSubdir>/shortcuts.json` when Runtime::setDataSubdir() is set.
 //
 //   ofkitty::runtime().keys().registerAction(
 //       "my.save", 's', OF_KEY_CONTROL, "Save",
@@ -67,7 +68,9 @@ public:
     /// Human-readable combo, e.g. "Ctrl-Shift-S"
     static std::string formatBindingLabel(int key, int modifiers);
 
-    /// Default persistence path: data/ofxKit/shortcuts.json (directory created if needed).
+    /// Default persistence path: `<bin/data>/shortcuts.json` (or
+    /// `<bin/data>/<Runtime::dataSubdir()>/shortcuts.json` if a subdir is set).
+    /// Directory created on first save if needed.
     static std::string defaultBindingsPath();
 
     /// Merge bindings from file into registered actions (unknown ids skipped).

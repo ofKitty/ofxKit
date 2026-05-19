@@ -5,32 +5,23 @@
 
 #include "ofJson.h"
 
-#include <ofxImGuiStyle/src/ofxImGuiStyle.h>
+#include <ofxImGuiStyle/src/ImTheme.h>
+#include <ofxImGuiStyle/src/ImThemeRegistry.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <fstream>
 
-#if !defined(TARGET_OPENGLES) && !defined(TARGET_RASPBERRY_PI)
-#  define OFXKIT_HAS_GLFW 1
-#  include <GLFW/glfw3.h>
-#endif
-
 namespace ofkitty {
 
 float Runtime::detectUIScale()
 {
-#ifdef OFXKIT_HAS_GLFW
-    if (GLFWmonitor* monitor = glfwGetPrimaryMonitor()) {
-        float xs = 1.f, ys = 1.f;
-        glfwGetMonitorContentScale(monitor, &xs, &ys);
-        float scale = std::max(xs, ys);
-        if (scale > 0.1f && scale < 8.f)
-            return scale;
-    }
-#endif
-    return 1.0f;
+    // Delegate to ImTheme so the GLFW HiDPI query only lives in one place
+    // (addons/ofxImGuiStyle/src/ImThemeRegistry.cpp). This stays here as a
+    // thin compatibility wrapper because the function is part of ofxKit's
+    // public API (declared static in Runtime.h).
+    return ImTheme::DetectOsScale();
 }
 
 void Runtime::setUIScale(float scale)
@@ -47,14 +38,14 @@ void Runtime::applyUIScale()
 {
     if (!ImGui::GetCurrentContext())
         return;
-    m_style.applyScale(m_uiScale);
+    ImTheme::ApplyScale(m_uiScale);
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowMinSize = ImVec2(160.f * m_uiScale, 50.f * m_uiScale);
 }
 
 void Runtime::loadUIScalePref()
 {
-    std::string path = ofToDataPath("ofxKit/uiScale.json", true);
+    std::string path = dataPath("uiScale.json");
     if (!of::filesystem::exists(of::filesystem::path(path)))
         return;
     try {
@@ -70,7 +61,7 @@ void Runtime::loadUIScalePref()
 
 void Runtime::saveUIScalePref()
 {
-    std::string path = ofToDataPath("ofxKit/uiScale.json", true);
+    std::string path = dataPath("uiScale.json");
     try {
         of::filesystem::create_directories(of::filesystem::path(path).parent_path());
         ofJson        j;
@@ -80,17 +71,17 @@ void Runtime::saveUIScalePref()
     } catch (...) {}
 }
 
-void Runtime::setTheme(Theme theme)
+void Runtime::setTheme(const std::string& id)
 {
-    m_theme        = theme;
-    m_themeSet     = true;
+    m_themeId  = id;
+    m_themeSet = true;
     if (!ImGui::GetCurrentContext()) {
         saveThemePref();
         return;
     }
     ImGui::GetStyle() = ImGuiStyle{};
     applyTheme();
-    m_style.captureBaseStyle();
+    ImTheme::CaptureBaseStyle();
     applyUIScale();
     saveThemePref();
 }
@@ -99,16 +90,18 @@ void Runtime::applyTheme()
 {
     if (!ImGui::GetCurrentContext())
         return;
-    switch (m_theme) {
-        case Theme::Dark: ofxImGuiStyle::applyDarkTheme(); break;
-        case Theme::Light: ofxImGuiStyle::applyLightTheme(); break;
-        case Theme::Classic: ofxImGuiStyle::applyClassicTheme(); break;
+    if (!ImTheme::ApplyByName(m_themeId)) {
+        ofLogWarning("ofxKit") << "Theme '" << m_themeId
+                               << "' not registered - falling back to '"
+                               << kDefaultThemeId << "'.";
+        ImTheme::ApplyTheme(ImTheme::Theme_DarculaDarker);
+        m_themeId = kDefaultThemeId;
     }
 }
 
 void Runtime::loadThemePref()
 {
-    std::string path = ofToDataPath("ofxKit/theme.json", true);
+    std::string path = dataPath("theme.json");
     if (!of::filesystem::exists(of::filesystem::path(path)))
         return;
     try {
@@ -116,13 +109,7 @@ void Runtime::loadThemePref()
         ofJson        j;
         in >> j;
         if (j.contains("theme")) {
-            std::string s = j["theme"].get<std::string>();
-            if (s == "dark")
-                m_theme = Theme::Dark;
-            else if (s == "light")
-                m_theme = Theme::Light;
-            else if (s == "classic")
-                m_theme = Theme::Classic;
+            m_themeId  = j["theme"].get<std::string>();
             m_themeSet = true;
         }
     } catch (...) {}
@@ -130,17 +117,11 @@ void Runtime::loadThemePref()
 
 void Runtime::saveThemePref()
 {
-    std::string path = ofToDataPath("ofxKit/theme.json", true);
+    std::string path = dataPath("theme.json");
     try {
         of::filesystem::create_directories(of::filesystem::path(path).parent_path());
-        const char* s = "dark";
-        switch (m_theme) {
-            case Theme::Dark: s = "dark"; break;
-            case Theme::Light: s = "light"; break;
-            case Theme::Classic: s = "classic"; break;
-        }
-        ofJson        j;
-        j["theme"] = s;
+        ofJson j;
+        j["theme"] = m_themeId;
         std::ofstream out(path);
         out << j.dump(2);
     } catch (...) {}

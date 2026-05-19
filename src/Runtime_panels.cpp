@@ -4,6 +4,7 @@
 #include <ofxEnTTKit/src/component_editor_registration.h>
 #include <ofxEnTTKit/src/ofxEnTTKit.h>
 #include <ofxEnTTInspector/src/ofxEnTTInspector.h>
+#include <ofxImGuiStyle/src/IconsFontAwesome5.h>
 
 #include <imgui.h>
 
@@ -295,7 +296,7 @@ void Runtime::drawSceneWindow(bool& visible)
         return;
     }
 
-    int total = static_cast<int>(reg.storage<entt::entity>().size());
+    int total = static_cast<int>(reg.storage<entt::entity>().free_list());
     ImGui::TextDisabled("%d entities", total);
     ImGui::Separator();
     ImGui::Spacing();

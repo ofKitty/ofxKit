@@ -1,10 +1,13 @@
 #pragma once
 
 #include "ofMain.h"
+#include "RulerUtil.h"
 #include "ShortcutManager.h"
 #include <ofxImGui/src/ofxImGui.h>
 #include <ofxImGui/src/GuiEventHelper.h>
-#include <ofxImGuiStyle/src/ofxImGuiStyle.h>
+#include <ofxImGuiStyle/src/ImTheme.h>
+#include <ofxImGuiStyle/src/ImThemeRegistry.h>
+#include <ofxImGuiStyle/src/ImFonts.h>
 #include <ofxImGuiFileDialog/src/ofxImGuiFileDialog.h>
 #include <ofxImGuiTextEdit/src/ofxImGuiTextEdit.h>
 #include <ofxImGuizmo/src/ofxImGuizmo.h>
@@ -102,18 +105,36 @@ public:
     // Edit mode
     // -------------------------------------------------------------------------
     bool isEditMode()    const { return m_editMode; }
+
+    // Toggle only the edit-mode windows, leaving the menu bar and status bar
+    // untouched. Bound to Tab by default. Equivalent to the old toggleEditMode().
     void toggleEditMode();
+
+    // Toggle the entire UI at once: edit-mode windows + menu bar + status bar.
+    // Bound to Ctrl/Cmd+E by default.  When turning off, chrome is hidden too;
+    // when turning on, chrome is restored together with the windows.
+    void toggleAllUI();
+
     void setEditMode(bool on)  { m_editMode = on; }
+
+    // -------------------------------------------------------------------------
+    // Chrome visibility (menu bar + status bar)
+    // -------------------------------------------------------------------------
+    // Normally controlled together with edit mode via toggleAllUI() / Ctrl+E.
+    // Call directly when you need to hide or show the chrome independently.
+    bool isChromeHidden()      const { return m_hideChrome; }
+    void setHideChrome(bool v)       { m_hideChrome = v; }
 
     // -------------------------------------------------------------------------
     // Built-in panel registration
     // -------------------------------------------------------------------------
-    // By default Runtime::onSetup automatically registers all built-in panels
-    // (Toolbar, Scene, Properties, Code Editor, etc.).  Apps that want explicit
-    // control over which panels are present can call
-    //   setAutoRegisterBuiltIns(false)
-    // before Runtime::attach(), then call registerBuiltInWindows() themselves
-    // at the appropriate point in setup().
+    // By default Runtime registers NO built-in panels (opt-in).  Call any of
+    // these before or after Runtime::attach() to add the panels you need:
+    //
+    //   setAutoRegisterBuiltIns(true)        // legacy: register everything
+    //   runtime().enableBuiltInWindow("Scene")   // add one panel
+    //   runtime().enableBuiltInWindows()         // Scene + Properties
+    //   runtime().enableAllBuiltInWindows()      // Toolbar, Scene, Properties, …
     bool autoRegisterBuiltIns() const { return m_autoRegisterBuiltIns; }
     void setAutoRegisterBuiltIns(bool v) { m_autoRegisterBuiltIns = v; }
     void registerBuiltInWindows();
@@ -158,25 +179,53 @@ public:
         enum class RulerUnit { Pixels, Millimetres, Custom };
         RulerUnit   rulerUnit       {RulerUnit::Pixels};
 
-        // Margin overlay (drawn by panels via ofkitty::drawMarginRect).
-        // Colour and visibility are global so every example/panel using the
-        // helper renders margins consistently. Sizes (e.g. paper margin in mm)
-        // remain per-document and live with the engine, not here.
-        bool    showMarginRect {true};
-        ofColor marginColor    {180, 90, 220, 200};   ///< default purple
+        // Controls what Ctrl/Cmd+E does (configurable in Appearance preferences).
+        // true  → Ctrl+E hides the entire UI: windows + menu bar + status bar.
+        // false → Ctrl+E hides windows only (same as Tab).
+        // Tab always hides windows only regardless of this setting.
+        bool    hideAllUI      {true};
 
-        // When true, Tab / Ctrl+E also hides the menu bar and status bar
-        // (not just the edit-mode windows) when leaving edit mode.
-        bool    hideAllUI      {false};
+        // ---- Audio device / stream format ----
+        // Master volume is intentionally NOT stored here: it belongs to whatever
+        // addon owns the audio graph (e.g. ofxBapp::AppSettings). Register a
+        // PrefSerializer if you want it to share appPrefs.json.
+        std::string audioOutputDevice  {};   ///< empty = system default
+        std::string audioInputDevice   {};   ///< empty = no input
+        int         audioSampleRate    {44100};
+        int         audioBufferSize    {512};
+
+        // Margin overlay and MIDI port routing used to live here. They are now
+        // owned by their respective addons (see addons/ofxMidiKit/src/ofxMidiKit.h
+        // and any ofxRulerKit / ofxPlotter consumer). Addons that want their
+        // fields persisted into appPrefs.json should call
+        // Runtime::registerPrefSerializer(...).
     };
 
     const AppPrefs& appPrefs() const { return m_prefs; }
 
-    // ---- Margin overlay (AppPrefs-backed; setters persist) ----
-    bool           showMarginRect()                     const { return m_prefs.showMarginRect; }
-    void           setShowMarginRect(bool v)                  { m_prefs.showMarginRect = v; saveAppPrefs(); }
-    const ofColor& marginColor()                        const { return m_prefs.marginColor; }
-    void           setMarginColor(const ofColor& c)           { m_prefs.marginColor = c;    saveAppPrefs(); }
+    // ---- Audio preferences ----
+    // Device / sample-rate / buffer changes require a stream restart; register
+    // a callback so the owning app (or an addon like ofxAcidBox) can rebuild
+    // its ofSoundStream from the saved prefs. Master volume is intentionally
+    // not exposed here — it belongs to whichever addon owns the audio graph.
+    int         audioSampleRate() const { return m_prefs.audioSampleRate; }
+    int         audioBufferSize() const { return m_prefs.audioBufferSize; }
+    const std::string& audioOutputDevice() const { return m_prefs.audioOutputDevice; }
+    const std::string& audioInputDevice()  const { return m_prefs.audioInputDevice; }
+
+    // Call this once at startup so the Audio prefs page can restart your stream.
+    void setAudioRestartCallback(std::function<void()> cb) { m_audioRestartCallback = std::move(cb); }
+
+    // ---- Test signal ---------------------------------------------------------
+    // Call this from your ofApp::audioOut() to mix in the tone/noise test signal
+    // that can be toggled in Audio Preferences. Safe to call every frame — it
+    // is a no-op when neither signal type is active.
+    //
+    //   void ofApp::audioOut(ofSoundBuffer& buf) {
+    //       // ... your synth fill ...
+    //       runtime().mixTestSignal(buf);
+    //   }
+    void mixTestSignal(ofSoundBuffer& buf);
 
     // -------------------------------------------------------------------------
     // Viewport windows — independent FBO-based scene views
@@ -212,30 +261,104 @@ public:
     //
 
     // Self-contained state for one secondary viewport panel.
-    // The Runtime owns the lifetime; addViewportWindow() returns a raw pointer
-    // for adjusting the initial camera preset before the first frame.
+    // The Runtime owns the lifetime; addViewportWindow() / addViewportWindow2D()
+    // return a raw pointer so you can configure the instance before the first frame.
     struct ViewportInstance {
-        std::string title     = "Scene View";
+
+        // ---- Mode -----------------------------------------------------------
+        enum class Mode { Orbit3D, Ortho2D };
+        Mode mode = Mode::Orbit3D;
+
+        // ---- Shared ---------------------------------------------------------
+        std::string title        = "Scene View";
+        bool        showRulers   = false;
+        bool        editModeOnly = true;  // set false before addViewportWindow[2D]()
+
+        // ---- Orbit3D (Mode::Orbit3D only) -----------------------------------
         float       azimuth   = 30.f;
         float       elevation = 20.f;
         float       distance  = 500.f;
         glm::vec3   target    = {0.f, 0.f, 0.f};
         bool        showGizmo = true;
-        bool        showRulers = false;
-        ofFbo       fbo;
-        ofCamera    cam;
-        glm::vec2   lastPanelSize = {0.f, 0.f};
+
+        // ---- Ortho2D (Mode::Ortho2D only) -----------------------------------
+        // Content size in the units used by your renderer (mm, px, etc.).
+        glm::vec2   contentSize = {200.f, 200.f};
+        std::string contentUnit = "px";    // shown on ruler tick labels
+        glm::vec2   pan2D       = {};      // canvas-pixel offset from fitted centre
+        float       zoom2D      = 1.f;     // multiplier on the computed fit zoom
+
+        // Optional guide set — pass a pointer so the ruler strip creates and
+        // moves draggable guides.  nullptr = no guides.
+        GuideSet*   guides = nullptr;
+
+        // Ortho2D renderer callbacks:
+        //
+        //   headerDraw()         ImGui context, runs before the canvas area.
+        //                        Return true to suppress the canvas entirely
+        //                        (use for progress bars, "no content" messages).
+        //
+        //   renderer2D()         OF context, called inside fbo.begin()…end().
+        //                        Origin = content top-left, 1 unit = 1 content
+        //                        unit, Y-DOWN.  Draw paths, images, etc. here.
+        //
+        //   overlayDraw(vp)      ImGui context, called after the FBO image is
+        //                        displayed.  Use toScreen() / toContent() for
+        //                        hit-testing and ImDrawList overlays.
+        // menuBarDraw()       ImGui context, called inside BeginMenuBar / EndMenuBar
+        //                        before the built-in View menu.  Add BeginMenu /
+        //                        SmallButton widgets here for app-specific controls.
+        std::function<void()>                    menuBarDraw;
+        std::function<bool()>                    headerDraw;
+        std::function<void()>                    renderer2D;
+        std::function<void(ViewportInstance&)>   overlayDraw;
+
+        // ---- Coordinate converters (Ortho2D — updated each frame) ----------
+        // screen = (ox + content.x * zoom,  oy + content.y * zoom)
+        ImVec2    toScreen (float cx, float cy) const noexcept
+            { return { _ox + cx * _zoom, _oy + cy * _zoom }; }
+        glm::vec2 toContent(float sx, float sy) const noexcept
+            { return { (_zoom > 0.f) ? (sx - _ox) / _zoom : 0.f,
+                       (_zoom > 0.f) ? (sy - _oy) / _zoom : 0.f }; }
+        float     contentZoom()     const noexcept { return _zoom; }
+        ImVec2    canvasOriginPx()  const noexcept { return { _canvasOx, _canvasOy }; }
+        float     canvasW()         const noexcept { return _canvasW; }
+        float     canvasH()         const noexcept { return _canvasH; }
+        // True when the mouse is inside the canvas area and ImGui is not capturing it.
+        bool      isCanvasHovered() const noexcept { return _canvasHovered; }
+
+        // ---- Internal (managed by Runtime — do not modify) -----------------
+        ofFbo     fbo;
+        ofCamera  cam;
+        glm::vec2 lastPanelSize = {};
+        float _ox = 0.f, _oy = 0.f, _zoom = 1.f;
+        float _canvasOx = 0.f, _canvasOy = 0.f;
+        float _canvasW  = 0.f, _canvasH  = 0.f;
+        bool  _canvasHovered = false;
     };
 
     using ViewportRenderer = std::function<void()>;
     void setViewportRenderer(ViewportRenderer fn);
     void clearViewportRenderer();
 
-    /// Create a named viewport panel. Pass an empty string (default) to
-    /// auto-name: "Scene View", "Scene View 2", "Scene View 3", …
-    /// Returns a pointer to set the initial camera angle. Each title must be
-    /// unique — it becomes the ImGui window title, shown under View menu.
+    /// Create a named 3-D orbit viewport panel.
     ViewportInstance* addViewportWindow(std::string title = "");
+
+    /// Create a named 2-D orthographic canvas panel.
+    ///
+    ///   auto* vp = runtime().addViewportWindow2D("Preview", {210.f, 297.f}, "mm");
+    ///   vp->renderer2D  = [this]{ drawContent(); };
+    ///   vp->overlayDraw = [this](auto& vp){ drawHandles(vp); };
+    ///   vp->guides      = &m_guides;
+    ///
+    /// Provides scroll-to-zoom around cursor, middle-mouse / Alt+LMB pan,
+    /// double-click-to-fit, optional rulers, and toScreen() / toContent()
+    /// coordinate converters.  editModeOnly defaults to false — the panel
+    /// remains visible outside edit mode.
+    ViewportInstance* addViewportWindow2D(std::string  title,
+                                          glm::vec2    contentSize,
+                                          std::string  contentUnit  = "px",
+                                          bool         editModeOnly = false);
 
     /// Remove a viewport panel by title. No-op if not found.
     void removeViewportWindow(const std::string& title);
@@ -243,31 +366,30 @@ public:
     // -------------------------------------------------------------------------
     // Built-in window registration
     // -------------------------------------------------------------------------
-    // By default all built-in windows are registered automatically at startup.
-    // Call any of these in setup() or main.cpp before ofRunApp() to override.
+    // Built-in windows are opt-in by default — none are registered unless you
+    // explicitly ask for them.  Call any of these in setup() or main.cpp:
     //
-    //   runtime().disableBuiltInWindows();          // register none
+    //   runtime().enableBuiltInWindow("Toolbar");   // one at a time (additive)
+    //   runtime().enableBuiltInWindow("Scene");
     //   runtime().enableBuiltInWindows();           // Scene + Properties only
-    //   runtime().enableBuiltInWindow("Scene");     // one at a time (additive)
-    //   runtime().enableBuiltInWindow("Toolbar");
-    //   runtime().enableAllBuiltInWindows();        // all (explicit default)
+    //   runtime().enableAllBuiltInWindows();        // all built-in panels
+    //   runtime().disableBuiltInWindows();          // reset to default (none)
     //
     // Accepted names: "Toolbar", "Scene", "Properties", "Shortcuts",
     //                 "Preferences", "Code Editor", "Path Editor"
     // Stable IDs (e.g. "ofxkit.window.scene") are also accepted.
     // -------------------------------------------------------------------------
 
-    /// Register none of the built-in windows.
+    /// Register none of the built-in windows (same as the default).
     void disableBuiltInWindows();
 
     /// Register one specific built-in window by display name or stable ID.
-    /// Implicitly disables auto-registration of all others.
     void enableBuiltInWindow(const std::string& nameOrId);
 
     /// Register the standard set: Scene (left) and Properties (right).
     void enableBuiltInWindows();
 
-    /// Register all built-in windows (same as the default behaviour).
+    /// Register all built-in windows.
     void enableAllBuiltInWindows();
 
     // -------------------------------------------------------------------------
@@ -292,13 +414,28 @@ public:
     void setImGuiIniPath(std::string path);
 
     // -------------------------------------------------------------------------
+    // Persisted-data location
+    // -------------------------------------------------------------------------
+    /// Built-in JSON files (appPrefs / theme / uiScale / shortcuts /
+    /// imgui.ini) live under `ofToDataPath(dataSubdir() + "<file>")`.
+    /// Default subdir is empty, so they sit at the top of `bin/data/`.
+    /// Set a non-empty subdir before `Runtime::attach()` (e.g. `"ofKitty"`)
+    /// to group them in a folder. Leading/trailing slashes are normalised.
+    void               setDataSubdir(const std::string& subdir);
+    const std::string& dataSubdir() const { return m_dataSubdir; }
+
+    /// Build a `bin/data/...` path that respects `setDataSubdir()`. Use
+    /// this if your addon wants to drop a JSON next to ofxKit's own files.
+    std::string        dataPath(const std::string& filename) const;
+
+    // -------------------------------------------------------------------------
     // UI scale (HiDPI / 4K)
     // -------------------------------------------------------------------------
     /// Set the global UI scale factor. 1.0 = native, 2.0 = double size for
     /// 4K screens, etc. Applies live: rescales all widgets and the global
     /// font scale. Auto-detected from the primary monitor at startup; users
     /// can override via the View ▸ UI Scale menu and the value persists in
-    /// `bin/data/ofxKit/uiScale.json`.
+    /// `bin/data/uiScale.json` (or `dataSubdir()/uiScale.json`).
     void setUIScale(float scale);
     float uiScale() const { return m_uiScale; }
 
@@ -309,16 +446,37 @@ public:
     // -------------------------------------------------------------------------
     // Theme
     // -------------------------------------------------------------------------
-    enum class Theme {
-        Dark,          ///< ofxImGuiStyle dark preset (default)
-        Light,         ///< ofxImGuiStyle light preset
-        Classic,       ///< ofxImGuiStyle classic preset
-    };
+    //
+    // ofxKit does not own the theme registry. Theme presets live in
+    // ImTheme / ImThemeRegistry (ofxImGuiStyle). The Runtime only:
+    //   - persists the selected theme id to data/theme.json
+    //     (or `dataSubdir()/theme.json` if a subdir is configured),
+    //   - re-applies the theme after a UI-scale change, and
+    //   - exposes a Theme submenu in the View menu (full selector lives in
+    //     Preferences > Appearance via ImTheme::ShowSelector).
+    //
+    // To register a new theme from an addon, call:
+    //
+    //     ImTheme::RegisterCustom({"myaddon", "Pretty Name", &myApplyFn});
+    //     runtime().setTheme("myaddon");
+    //
+    // Valid ids include the upstream ImTheme built-ins ("Darcula",
+    // "DarculaDarker", "ImGuiColorsDark", "MaterialFlat", ...) and any id
+    // an addon has passed to ImTheme::RegisterCustom (e.g. "tb303").
 
-    /// Set the active ImGui theme. ofxImGuiStyle owns the reusable style
-    /// mechanics; ofxKit persists this editor preference and reapplies scale.
-    void setTheme(Theme theme);
-    Theme theme() const { return m_theme; }
+    /// Set the active theme by its string id. Dispatches through
+    /// ImTheme::ApplyByName which searches the custom registry first, then
+    /// the vendored built-ins. Unknown ids fall back to kDefaultThemeId
+    /// with a warning.
+    void setTheme(const std::string& id);
+
+    /// Currently selected theme id.
+    const std::string& themeId() const { return m_themeId; }
+
+    /// Default theme id used when no preference is saved and when
+    /// `setTheme(id)` is called with an unknown id. Matches the upstream
+    /// ImTheme name for Theme_DarculaDarker.
+    static constexpr const char* kDefaultThemeId = "DarculaDarker";
 
     // -------------------------------------------------------------------------
     // Toolbar items
@@ -508,6 +666,50 @@ public:
     const std::vector<PreferencePage>& preferencePages() const { return m_preferencePages; }
 
     // -------------------------------------------------------------------------
+    // Pref serializers — extension hook for addons to round-trip JSON into
+    // appPrefs.json without ofxKit having to know about their fields.
+    //
+    // Each registered serializer contributes a save() lambda (called inside
+    // saveAppPrefs after the built-in block) and a load() lambda (called
+    // inside loadAppPrefs after the built-in block). Use a stable, unique id
+    // so duplicate registrations are detected and re-registration replaces
+    // the previous entry.
+    //
+    // Typical addon pattern — keep your settings in a struct on your addon
+    // object and ferry it through ofJson:
+    //
+    //   runtime().registerPrefSerializer(
+    //       "myaddon",
+    //       [this](ofJson& j) {
+    //           j["myaddon"] = {
+    //               {"someInt",  m_settings.someInt},
+    //               {"someStr",  m_settings.someStr},
+    //           };
+    //       },
+    //       [this](const ofJson& j) {
+    //           if (!j.contains("myaddon")) return;
+    //           const auto& s = j["myaddon"];
+    //           if (s.contains("someInt")) m_settings.someInt = s["someInt"];
+    //           if (s.contains("someStr")) m_settings.someStr = s["someStr"].get<std::string>();
+    //       });
+    //
+    // Addons that prefer a separate file (e.g. ofxMidiKit's midiPrefs.json)
+    // do not need this API; it exists for addons that want to live inside
+    // the main appPrefs.json alongside the built-in keys.
+    // -------------------------------------------------------------------------
+    struct PrefSerializer {
+        std::string                        id;     // unique id (e.g. "myaddon")
+        std::function<void(ofJson&)>       save;   // called inside saveAppPrefs
+        std::function<void(const ofJson&)> load;   // called inside loadAppPrefs
+    };
+
+    void registerPrefSerializer(std::string id,
+                                std::function<void(ofJson&)>       save,
+                                std::function<void(const ofJson&)> load);
+    bool unregisterPrefSerializer(const std::string& id);
+    const std::vector<PrefSerializer>& prefSerializers() const { return m_prefSerializers; }
+
+    // -------------------------------------------------------------------------
     // Status bar items
     // -------------------------------------------------------------------------
     // Register a widget rendered inside the bottom status bar.
@@ -645,8 +847,10 @@ private:
     void drawPrefsRendering();
     void drawPrefsLogging();
     void drawPrefsStatusBar();
+    void drawPrefsAudio();
 
     void drawViewportWindow(ViewportInstance& vp, bool& visible);
+    void drawViewportWindow2D(ViewportInstance& vp, bool& visible);
     void updateViewportCamera(ViewportInstance& vp);
 
     // Tool windows
@@ -656,8 +860,9 @@ private:
     void drawGizmoOverlay();
     void drawGizmoInViewport(ViewportInstance& vp, const ofRectangle& imgScreenRect);
 
-    bool             m_editMode  {false};
-    bool             m_autoRegisterBuiltIns {true};
+    bool             m_editMode   {false};
+    bool             m_hideChrome {false};  ///< hides menu bar + status bar (set by toggleAllUI)
+    bool             m_autoRegisterBuiltIns {false};
     std::unordered_set<std::string> m_requestedBuiltInWindows;
     bool             m_passthruCentralNode {true};
     int              m_toggleEditLastFrame {-1};
@@ -673,6 +878,7 @@ private:
     // after m_gui's — ImGui flushes its layout on shutdown and would
     // otherwise dereference a dangling const char*.
     std::string      m_imguiIniPath;
+    std::string      m_dataSubdir;   ///< prefix under bin/data/ for ofxKit JSONs (empty = root)
     std::vector<RuntimeWindow> m_windows;
     std::vector<std::string>   m_defaultLayoutExtraLeftDocks;
     std::vector<std::string>   m_defaultLayoutExtraRightDocks;
@@ -685,14 +891,14 @@ private:
     std::vector<MenuBarCallback> m_menuBarRawCallbacks;
     std::vector<PostSetupHook>  m_postSetupHooks;
 
-    // UI scale & theme state. ofxImGuiStyle owns the unscaled baseline; ofxKit
-    // only persists the chosen scale/theme and applies editor-window policy.
+    // UI scale & theme state. ImTheme (ofxImGuiStyle) owns the unscaled
+    // baseline through ImTheme::CaptureBaseStyle; ofxKit only persists the
+    // chosen scale/theme id and applies editor-window policy on top.
     float            m_uiScale     {1.0f};
     bool             m_uiScaleSet  {false};
     bool             m_themeSet    {false};
-    Theme            m_theme       {Theme::Dark};
+    std::string      m_themeId     {kDefaultThemeId};
 
-    ofxImGuiStyle    m_style;                           // fonts, themes, and style scaling
     ofxImGui::Gui    m_gui;
 
     std::vector<ComponentDescriptor> m_components;
@@ -703,9 +909,25 @@ private:
     bool             m_defaultLayoutBuilt {false};
     bool             m_layoutResetPending {false};
 
+    // Audio device cache (ASIO probing is slow — only scan once, refresh on demand)
+    struct AudioDeviceInfo { std::string name; int inputChannels{0}; int outputChannels{0}; };
+    std::vector<AudioDeviceInfo> m_cachedAudioDevices;
+    bool                         m_audioDeviceListDirty {true};
+    std::function<void()>        m_audioRestartCallback;
+
+    // Test signal (mixed by mixTestSignal(), toggled from Audio Preferences UI)
+    bool   m_testToneActive   {false};
+    bool   m_testNoiseActive  {false};
+    float  m_testToneFreq     {440.f};
+    float  m_testSignalLevel  {0.1f};
+    double m_testTonePhase    {0.0};
+
     std::vector<PreferencePage> m_preferencePages;
     bool             m_builtInPreferencePagesRegistered {false};
     std::string      m_selectedPreferencePage;          // id of selected page
+
+    // Addon-supplied pref serializers, invoked by load/saveAppPrefs.
+    std::vector<PrefSerializer> m_prefSerializers;
 
     std::vector<StatusItem> m_statusItems;
     bool             m_builtInStatusItemsRegistered {false};

@@ -11,6 +11,9 @@ void ofApp::setup() {
     ofSetFrameRate(60);
     ofSetVerticalSync(true);
 
+    // Enable the full built-in panel set (Toolbar, Scene, Properties, …)
+    runtime().enableAllBuiltInWindows();
+
     m_cam.setDistance(550.f);
     m_cam.setNearClip(1.f);
     m_cam.setFarClip(10000.f);
@@ -117,7 +120,6 @@ void ofApp::createDemoScene() {
     addMeshEntity(ecs::MESH_CYLINDER,  "Cylinder",  {-100.f, 180.f,  0.f}, ofColor(220, 100, 180));
     addMeshEntity(ecs::MESH_ICOSPHERE, "Gem",       { 100.f, 180.f,  0.f}, ofColor(255, 220,  60));
 
-    // Camera stand-in entity (inspectable but not rendered as a mesh)
     auto cam_e = m_registry.create();
     auto& n    = m_registry.emplace<ecs::node_component>(cam_e, std::string("Camera"));
     n.node.setPosition({0.f, -200.f, 400.f});

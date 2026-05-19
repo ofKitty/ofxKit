@@ -87,7 +87,9 @@ void Runtime::onSetup(ofEventArgs&)
 
     // Load Input Sans + Font Awesome icons so toolbar / UI can use FA glyphs.
     // Must happen right after gui.setup() before the first frame renders.
-    m_style.loadFonts(m_gui, 14.0f, 1.0f);
+    if (ImFont* font = ImFonts::LoadDefaultFonts(ImGui::GetIO().Fonts, 14.0f))
+        m_gui.setDefaultFont(font);
+    m_gui.rebuildFontsTexture();
 
     // Register event filters that block OF mouse/keyboard events from reaching
     // the app while ImGui has claimed them.  Must happen after m_gui.setup()
@@ -98,7 +100,7 @@ void Runtime::onSetup(ofEventArgs&)
     // "imgui.ini" is relative to the process working directory, which can
     // change depending on how the example is launched.
     if (m_imguiIniPath.empty()) {
-        m_imguiIniPath = ofToDataPath("ofxKit/imgui.ini", true);
+        m_imguiIniPath = dataPath("imgui.ini");
     }
     detail::createParentDirectoryIfNeeded(m_imguiIniPath);
     ImGui::GetIO().IniFilename = m_imguiIniPath.c_str();
@@ -124,15 +126,16 @@ void Runtime::onSetup(ofEventArgs&)
         m_pathEditor = std::make_unique<PathEditorPanel>();
     }
 
-    // Apply the persisted theme through ofxImGuiStyle, then capture that
-    // unscaled baseline before ofxKit layers editor-scale policy on top.
+    // Apply the persisted theme through ImTheme, then capture that unscaled
+    // baseline before ofxKit layers editor-scale policy on top.
     if (!m_themeSet)
         loadThemePref();
     applyTheme();
-    m_style.captureBaseStyle();
+    ImTheme::CaptureBaseStyle();
 
     // Auto-detect HiDPI / 4K scale unless the user explicitly set one
-    // before setup, or a saved preference exists in bin/data/ofxKit/.
+    // before setup, or a saved preference exists in bin/data/ (or the
+    // configured dataSubdir()).
     if (!m_uiScaleSet) {
         loadUIScalePref();
     }
@@ -144,7 +147,8 @@ void Runtime::onSetup(ofEventArgs&)
     for (auto& hook : m_postSetupHooks)
         hook(m_gui);
 
-    // Built-in shortcut — defaults + optional merge from data/ofxKit/shortcuts.json
+    // Built-in shortcut — defaults + optional merge from data/shortcuts.json
+    // (or `<dataSubdir()>/shortcuts.json`).
     m_shortcuts.setAutoSaveEnabled(false);
 #ifdef TARGET_OSX
     constexpr int kToggleEditMod = OF_KEY_COMMAND;
@@ -155,16 +159,18 @@ void Runtime::onSetup(ofEventArgs&)
         "ofkitty.toggle_edit",
         'e',
         kToggleEditMod,
-        "Toggle Edit mode",
-        [this] { toggleEditMode(); });
+        "Toggle All UI (windows + menu bar + status bar)",
+        [this] { toggleAllUI(); });
 
     m_shortcuts.registerAction(
         "ofkitty.toggle_edit_tab",
         OF_KEY_TAB,
         0,
-        "Toggle Edit mode (Tab)",
+        "Toggle Edit-mode windows only",
         [this] {
-            if (!ImGui::GetIO().WantCaptureKeyboard)
+            // Block only when a text-input widget has focus so Tab still works
+            // for toggling windows even when ImGui panels are visible.
+            if (!ImGui::GetIO().WantTextInput)
                 toggleEditMode();
         });
 
@@ -223,8 +229,35 @@ void Runtime::toggleEditMode()
     }
     m_toggleEditLastFrame = f;
 
-    m_editMode = !m_editMode;
-    ofLogNotice("ofxKit") << "Edit mode " << (m_editMode ? "ON" : "OFF");
+    // Tab always reveals chrome so the menu bar and status bar stay visible.
+    // This also ensures Tab works correctly when Ctrl+E previously hid everything:
+    // pressing Tab brings back the full UI (chrome + windows).
+    m_hideChrome = false;
+    m_editMode   = !m_editMode;
+    ofLogNotice("ofxKit") << "Edit mode (windows) " << (m_editMode ? "ON" : "OFF");
+}
+
+void Runtime::toggleAllUI()
+{
+    const int f = ofGetFrameNum();
+    if (m_toggleEditLastFrame == f) {
+        return;
+    }
+    m_toggleEditLastFrame = f;
+
+    if (m_prefs.hideAllUI) {
+        // "Hide entire UI" mode: toggle chrome and windows together.
+        // Use m_hideChrome as the primary toggle so this is idempotent even if
+        // Tab was pressed beforehand (m_editMode may already be false).
+        m_hideChrome = !m_hideChrome;
+        m_editMode   = !m_hideChrome;
+        ofLogNotice("ofxKit") << "All UI " << (!m_hideChrome ? "shown" : "hidden");
+    } else {
+        // "Hide windows only" mode: same as Tab — chrome always stays visible.
+        m_hideChrome = false;
+        m_editMode   = !m_editMode;
+        ofLogNotice("ofxKit") << "Edit mode (windows) " << (m_editMode ? "ON" : "OFF");
+    }
 }
 
 void Runtime::disableBuiltInWindows()
@@ -282,17 +315,17 @@ void Runtime::drawOverlay()
 {
     m_gui.begin();
 
-    // Menu bar — hidden when hideAllUI is set and edit mode is off, so the
-    // user gets a completely clean view.  Always shown in edit mode so they
-    // can re-enter it and reach app-specific menus.
-    if (!m_prefs.hideAllUI || m_editMode)
+    // Menu bar — hidden when m_hideChrome is set (toggled by Ctrl/Cmd+E via
+    // toggleAllUI).  Tab clears m_hideChrome so chrome is always visible after Tab.
+    const bool showChrome = !m_hideChrome;
+    if (showChrome)
         renderMainMenuBar();
 
     if (m_editMode)
         ImGuizmo::BeginFrame();
 
-    // Status bar — follows the same hide-all-UI rule as the menu bar.
-    if (!m_prefs.hideAllUI || m_editMode)
+    // Status bar follows the same chrome rule as the menu bar.
+    if (showChrome)
         drawStatusBar();
 
     // The dockspace is created unconditionally on every frame so that ImGui's
@@ -391,12 +424,25 @@ void Runtime::renderMainMenuBar()
             }
             ImGui::Separator();
             if (ImGui::BeginMenu("Theme")) {
-                if (ImGui::MenuItem("Dark", nullptr, m_theme == Theme::Dark))
-                    setTheme(Theme::Dark);
-                if (ImGui::MenuItem("Light", nullptr, m_theme == Theme::Light))
-                    setTheme(Theme::Light);
-                if (ImGui::MenuItem("Classic", nullptr, m_theme == Theme::Classic))
-                    setTheme(Theme::Classic);
+                // Quick-pick subset of ImTheme built-ins. The full selector
+                // (all 17 built-ins + addon-registered customs) lives in
+                // Preferences > Appearance via ImTheme::ShowSelector.
+                struct QuickPick { ImTheme::Theme_ id; const char* label; };
+                static constexpr QuickPick picks[] = {
+                    {ImTheme::Theme_DarculaDarker,   "Darcula Darker"},
+                    {ImTheme::Theme_Darcula,         "Darcula"},
+                    {ImTheme::Theme_ImGuiColorsDark, "ImGui Dark"},
+                    {ImTheme::Theme_MaterialFlat,    "Material Flat"},
+                    {ImTheme::Theme_LightRounded,    "Light Rounded"},
+                    {ImTheme::Theme_ImGuiColorsLight,"ImGui Light"},
+                };
+                for (const auto& p : picks) {
+                    const char* id = ImTheme::Name(p.id);
+                    if (ImGui::MenuItem(p.label, nullptr, m_themeId == id))
+                        setTheme(id);
+                }
+                ImGui::Separator();
+                ImGui::MenuItem("More themes in Preferences \xe2\x80\xa6", nullptr, false, false);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("UI Scale")) {
@@ -608,6 +654,24 @@ void Runtime::setImGuiIniPath(std::string path)
             ImGui::LoadIniSettingsFromDisk(m_imguiIniPath.c_str());
         }
     }
+}
+
+void Runtime::setDataSubdir(const std::string& subdir)
+{
+    m_dataSubdir = subdir;
+    while (!m_dataSubdir.empty()
+           && (m_dataSubdir.front() == '/' || m_dataSubdir.front() == '\\'))
+        m_dataSubdir.erase(0, 1);
+    while (!m_dataSubdir.empty()
+           && (m_dataSubdir.back() == '/' || m_dataSubdir.back() == '\\'))
+        m_dataSubdir.pop_back();
+}
+
+std::string Runtime::dataPath(const std::string& filename) const
+{
+    if (m_dataSubdir.empty())
+        return ofToDataPath(filename, true);
+    return ofToDataPath(m_dataSubdir + "/" + filename, true);
 }
 
 void Runtime::setAppName(std::string name)

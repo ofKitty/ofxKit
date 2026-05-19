@@ -32,7 +32,7 @@ float ofApp::canvasProgressFraction() const
 void ofApp::setup()
 {
     ofBackground(26, 28, 38);
-    ofSetWindowTitle("ofxKit — Progress Window Demo");
+    ofSetWindowTitle("ofxKit \u2014 Progress Window Demo");
 
     ofkitty::progress().registerWithRuntime();
     ofkitty::progress().setUseStatusBar(m_useStatusBar);
@@ -53,7 +53,7 @@ void ofApp::setup()
                 return;
             }
 
-            ImGui::TextDisabled("Trigger fake loaders — progress shows in the Runtime status bar or a floating window.");
+            ImGui::TextDisabled("Trigger fake loaders \u2014 progress shows in the Runtime status bar or a floating window.");
             ImGui::Spacing();
 
             // ---- Options ----
@@ -71,7 +71,7 @@ void ofApp::setup()
             }
 
             ImGui::SetNextItemWidth(160.f);
-            ImGui::SliderFloat("Sim speed", &m_simulationSpeed, 0.1f, 5.f, "%.1f×");
+            ImGui::SliderFloat("Sim speed", &m_simulationSpeed, 0.1f, 5.f, "%.1f\xc3\x97");
             ImGui::SetItemTooltip("Multiplier applied to the simulated step rate.");
 
             // ---- Fake loaders ----
@@ -87,7 +87,7 @@ void ofApp::setup()
                 ofkitty::progress().begin("Exporting layers", m_stepTotal);
             }
             if (stepRunning) ImGui::EndDisabled();
-            ImGui::SetItemTooltip("begin(title, N)  +  tick(label)  — typical batch export.");
+            ImGui::SetItemTooltip("begin(title, N)  +  tick(label)  \u2014 typical batch export.");
 
             ImGui::Spacing();
 
@@ -100,7 +100,7 @@ void ofApp::setup()
                 ofkitty::progress().begin("Rendering frames");
             }
             if (absRunning) ImGui::EndDisabled();
-            ImGui::SetItemTooltip("begin(title)  +  tick(label, 0..1)  — when total isn't known up front.");
+            ImGui::SetItemTooltip("begin(title)  +  tick(label, 0..1)  \u2014 when total isn't known up front.");
 
             ImGui::Spacing();
 
@@ -110,11 +110,11 @@ void ofApp::setup()
             if (ImGui::Button("Indeterminate  (4 s)", ImVec2(-1, 0))) {
                 m_activeDemo  = Demo::Indeterminate;
                 m_absolutePos = 0.f;
-                ofkitty::progress().begin("Connecting…");
-                ofkitty::progress().tickIndeterminate("Please wait…");
+                ofkitty::progress().begin("Connecting\xe2\x80\xa6");
+                ofkitty::progress().tickIndeterminate("Please wait\xe2\x80\xa6");
             }
             if (indRunning) ImGui::EndDisabled();
-            ImGui::SetItemTooltip("tickIndeterminate(label)  — animated marquee, no fraction known.");
+            ImGui::SetItemTooltip("tickIndeterminate(label)  \u2014 animated marquee, no fraction known.");
 
             ImGui::Spacing();
             ImGui::Separator();
@@ -185,7 +185,7 @@ void ofApp::update()
         // Run for 4 seconds then finish.
         m_absolutePos += dt * speed;
         if (m_absolutePos < 4.f) {
-            ofkitty::progress().tickIndeterminate("Please wait…");
+            ofkitty::progress().tickIndeterminate("Please wait\xe2\x80\xa6");
         } else {
             m_activeDemo  = Demo::None;
             m_absolutePos = 0.f;
@@ -216,7 +216,7 @@ void ofApp::draw()
     const float fade = hasProgress ? ofClamp(pr, 0.f, 1.f)
                                    : 0.35f + 0.08f * std::sin(t * 0.55f);
 
-    // Soft full-window colour fade (no vignette, no second “ribbon” layer)
+    // Soft full-window colour fade (no vignette, no second "ribbon" layer)
     ofMesh base;
     base.setMode(OF_PRIMITIVE_TRIANGLE_FAN);
     const float drift = t * 18.f + fade * 55.f;
@@ -240,9 +240,11 @@ void ofApp::draw()
     base.draw();
 
     const std::string help =
-        "ofxKit — Progress window demo\n"
-        "View > Test window — fake loader buttons (dock left on a fresh layout).\n"
-        "Ctrl+E — toggle edit mode. With “Use status bar”, progress shares the bottom status strip.";
+        "ofxKit \u2014 Progress window demo\n"
+        "View > Test window \u2014 fake loader buttons (dock left on a fresh layout).\n"
+        "Ctrl+E \u2014 toggle whole UI (windows + menu bar + status bar).\n"
+        "Tab    \u2014 toggle edit-mode windows only (menu bar stays visible).\n"
+        "With \"Use status bar\" on, progress shares the bottom status strip.";
 
     ofSetColor(228, 232, 245);
     ofPushMatrix();

@@ -19,13 +19,13 @@ Press **Cmd-E** at runtime to toggle the overlay (`Ctrl-E` is also registered as
 
 Sketches register dockable Inspector panels via `Runtime::registerWindow` — either with a **lambda** or (when the window-class headers are present in your ofxKit checkout) by subclassing **`KitRegisteredWindow`**, the same typed shape as **ofxBapp**'s **`bapp::baseWindow`**. See **[docs/windows.md](docs/windows.md)** for lambdas, **`KitPropertyBag`** / **baseProp** parity, and the optional **ofxBapp** bridge include.
 
-Built-in windows (Scene, Properties, Toolbar, Shortcuts, Preferences, Code Editor, Path Editor) are all registered by default. Call any of these before `ofRunApp()` to customise which ones appear:
+Built-in windows (Scene, Properties, Toolbar, Shortcuts, Preferences, Code Editor, Path Editor) are **opt-in by default** — none are registered unless you ask for them. Call any of these before `ofRunApp()`:
 
 ```cpp
-runtime().disableBuiltInWindows();          // none
-runtime().enableBuiltInWindows();           // Scene + Properties only
+runtime().enableBuiltInWindows();           // Scene + Properties (standard set)
 runtime().enableBuiltInWindow("Toolbar");   // one at a time (additive)
-runtime().enableAllBuiltInWindows();        // all (explicit default)
+runtime().enableAllBuiltInWindows();        // all built-in panels
+runtime().disableBuiltInWindows();          // reset to default (none)
 ```
 
 ---
@@ -87,19 +87,14 @@ void ofApp::setup() {
 
 ### App-owned registry
 
-Use this when your app already owns the ECS state and you want ofxKit to inspect it.
+When your app owns the ECS state, pass it to `attach` so the Runtime's inspector, status bar, and Scene panel all see the same entities:
 
 ```cpp
 // ofApp.h
-#pragma once
-#include "ofMain.h"
-#include "ofxKit.h"
-
 class ofApp : public ofBaseApp {
 public:
     entt::registry& registry() { return m_registry; }
     void setup() override;
-
 private:
     entt::registry m_registry;
 };
@@ -107,11 +102,12 @@ private:
 
 ```cpp
 // main.cpp
-auto window = ofCreateWindow(settings);
 auto app = std::make_shared<ofApp>();
 ofkitty::Runtime::attach(window, app, app->registry());
 ofRunApp(window, std::move(app));
 ```
+
+If you omit the registry argument, `runtime().registry()` returns Runtime's own internal registry — only use that path if your app creates all entities via `runtime().registry()` directly.
 
 ---
 
@@ -227,10 +223,10 @@ SystemRegistry       setup/update/draw/cleanup lifecycle orchestration
 | `runtime().toggleEditMode()`                     | Toggle Edit mode on/off                                                  |
 | `runtime().setAppName(name)`                     | Sets the name shown in the menu bar and status bar                       |
 | `runtime().registerWindow(w)`                    | Register a dockable UI panel (appears in the View menu)                  |
-| `runtime().disableBuiltInWindows()`              | Skip all built-in window registration                                    |
-| `runtime().enableBuiltInWindow(nameOrId)`        | Opt in to one built-in window; implicitly disables all others            |
+| `runtime().disableBuiltInWindows()`              | Reset to default: no built-in windows registered                         |
+| `runtime().enableBuiltInWindow(nameOrId)`        | Opt in to one specific built-in window (additive)                        |
 | `runtime().enableBuiltInWindows()`               | Register the standard set: Scene + Properties                            |
-| `runtime().enableAllBuiltInWindows()`            | Register all built-in windows (explicit default)                         |
+| `runtime().enableAllBuiltInWindows()`            | Register all built-in windows                                            |
 | `runtime().addMenuBarGroup(name, cb)`            | Add a top-level menu group to the main menu bar                          |
 | `runtime().registerComponent<T>(name, cat)`      | Register a component type in the Add Component picker (template form)    |
 | `runtime().registerComponent(desc)`              | Register a component with explicit has/add/remove lambdas                |
@@ -268,7 +264,7 @@ ofRunApp(window, std::move(app));
 
 ### `ofkitty::Runtime::attach(window, app, registry)`
 
-Call this when the app owns the ECS registry:
+Pass your app's registry when the app owns ECS state. The Runtime's inspector, status bar, and Scene panel all read from this registry:
 
 ```cpp
 ofkitty::Runtime::attach(window, app, app->registry());
@@ -283,6 +279,7 @@ For a vanilla openFrameworks project using `addons.make`, add:
 ```make
 ofxEnTT
 ofxImGui
+ofxImGuiStyle
 ofxEnTTKit
 ofxEnTTInspector
 ofxKit
@@ -295,6 +292,7 @@ ofxKit
 | `ofxEnTTKit`       | ECS components for OF types + `ofxNode` + `TransformSystem` |
 | `ofxEnTTInspector` | ImGui inspector panels for ECS components                   |
 | `ofxImGui`         | ImGui integration for openFrameworks                        |
+| `ofxImGuiStyle`    | Theme registry (`ImTheme`) + bundled fonts/icons (`ImFonts`) |
 
 
 In the ofKitty distribution, install/update these dependencies with:
@@ -331,6 +329,7 @@ In the ofKitty distribution, install/update these dependencies with:
 | [`docs/layers-panel.md`](docs/layers-panel.md)               | LayersPanel tree, ReorderDragDrop, LayerSystem      |
 | [`docs/status-bar.md`](docs/status-bar.md)                   | Status bar layout and implementation notes          |
 | [`docs/preferences.md`](docs/preferences.md)                 | App Preferences window — all OF settings            |
+| [`docs/appearance.md`](docs/appearance.md)                   | Theme/font integration with `ofxImGuiStyle` (`ImTheme` / `ImFonts`) |
 | [`docs/rulers.md`](docs/rulers.md)                           | Rulers overlay — pixel coordinates + mouse tracking |
 | [`docs/viewport-window.md`](docs/viewport-window.md)         | Secondary Viewport panel — FBO, camera controls     |
 | [`docs/tools.md`](docs/tools.md)                             | File dialog, Gizmo, Code Editor, Path Editor        |

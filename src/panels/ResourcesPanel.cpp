@@ -2,7 +2,6 @@
 #include "../Runtime.h"
 
 #include "imgui.h"
-#include "ofFilePath.h"
 #include "ofFileUtils.h"
 
 namespace ofkitty {

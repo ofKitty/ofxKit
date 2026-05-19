@@ -19,7 +19,6 @@ public:
     void update() override;
     void draw()   override;
 
-    // Exposed so main.cpp can call Runtime::attach(window, app, app->registry())
     entt::registry& registry() { return m_registry; }
 
 private:

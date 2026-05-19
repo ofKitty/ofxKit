@@ -74,7 +74,7 @@ See [`status-bar.md`](status-bar.md) for the full status item registry API.
 
 ## Persistence
 
-Settings are saved to `data/ofxKit/appPrefs.json` on every change and applied on startup:
+Settings are saved to `data/appPrefs.json` (or `data/<Runtime::dataSubdir()>/appPrefs.json` if a subdir is configured) on every change and applied on startup:
 
 ```json
 {

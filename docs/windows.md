@@ -108,17 +108,17 @@ Built-ins are implemented on top of the same registration pipeline (internally t
 | `Code Editor` | `ofxkit.window.code_editor` | true | Text editor panel (ofxImGuiTextEdit) |
 | `Path Editor` | `ofxkit.window.path_editor` | true | Vector path editor panel |
 
-By default all built-ins are registered automatically. Call any of the following in `setup()` or `main.cpp` before `ofRunApp()` to change that:
+By default **no built-in windows are registered** (opt-in). Call any of the following in `setup()` or `main.cpp` before `ofRunApp()`:
 
 ```cpp
-runtime().disableBuiltInWindows();        // register none
+runtime().enableBuiltInWindows();         // Scene + Properties (standard set)
 
-runtime().enableBuiltInWindows();         // Scene + Properties only (standard set)
+runtime().enableBuiltInWindow("Scene");   // one at a time — additive
+runtime().enableBuiltInWindow("Toolbar");
 
-runtime().enableBuiltInWindow("Scene");   // one at a time — additive,
-runtime().enableBuiltInWindow("Toolbar"); // implicitly disables all others
+runtime().enableAllBuiltInWindows();      // all built-in panels
 
-runtime().enableAllBuiltInWindows();      // all (explicit default)
+runtime().disableBuiltInWindows();        // reset to default (none)
 ```
 
 Both the display name (e.g. `"Scene"`) and the stable ID (e.g. `"ofxkit.window.scene"`) are accepted by `enableBuiltInWindow()`.

@@ -15,7 +15,7 @@ namespace ofkitty {
 
 void CodeEditorPanel::setup()
 {
-    m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Glsl);
+    m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::None);
     m_editor.SetPalette(TextEditor::PaletteId::Dark);
     m_editor.SetShowLineNumbersEnabled(true);
 }
@@ -87,12 +87,40 @@ void CodeEditorPanel::draw(bool& visible)
             m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::None);
     };
 
+    // Returns {filter string, default filename} based on the current language.
+    auto getDialogParams = [this]() -> std::pair<std::string, std::string> {
+        auto lang = m_editor.GetLanguageDefinition();
+        if (lang == TextEditor::LanguageDefinitionId::Gcode)
+            return {"G-code{.gcode,.nc,.cnc,.tap},All Files{.*}", "untitled.gcode"};
+        if (lang == TextEditor::LanguageDefinitionId::Glsl)
+            return {"Shaders{.glsl,.vert,.frag,.hlsl},All Files{.*}", "untitled.glsl"};
+        if (lang == TextEditor::LanguageDefinitionId::Hlsl)
+            return {"Shaders{.hlsl,.vert,.frag,.glsl},All Files{.*}", "untitled.hlsl"};
+        if (lang == TextEditor::LanguageDefinitionId::Cpp || lang == TextEditor::LanguageDefinitionId::C)
+            return {"C/C++{.cpp,.c,.h,.hpp},All Files{.*}", "untitled.cpp"};
+        if (lang == TextEditor::LanguageDefinitionId::Cs)
+            return {"C#{.cs},All Files{.*}", "untitled.cs"};
+        if (lang == TextEditor::LanguageDefinitionId::Python)
+            return {"Python{.py},All Files{.*}", "untitled.py"};
+        if (lang == TextEditor::LanguageDefinitionId::Lua)
+            return {"Lua{.lua},All Files{.*}", "untitled.lua"};
+        if (lang == TextEditor::LanguageDefinitionId::Json)
+            return {"JSON{.json},All Files{.*}", "untitled.json"};
+        if (lang == TextEditor::LanguageDefinitionId::Sql)
+            return {"SQL{.sql},All Files{.*}", "untitled.sql"};
+        return {"Source{.cpp,.h,.hpp,.c,.glsl,.vert,.frag,.hlsl,.py,.lua},"
+                "G-code{.gcode,.nc,.cnc},"
+                "Data{.json,.xml,.yaml,.txt,.md},"
+                "All Files{.*}", "untitled.txt"};
+    };
+
     auto doOpen = [&] {
         if (!m_openFile)
             return;
         m_openFile("code_open", "Open File",
                    "Source{.cpp,.h,.hpp,.c,.cs,.py,.lua,.js,.ts},"
                    "Shaders{.glsl,.vert,.frag,.hlsl},"
+                   "G-code{.gcode,.nc,.cnc,.tap},"
                    "Data{.json,.xml,.yaml,.txt,.md},"
                    "All Files{.*}",
                    [this, detectLanguage](const std::string& path) {
@@ -117,11 +145,8 @@ void CodeEditorPanel::draw(bool& visible)
             return;
         }
         if (m_filePath.empty()) {
-            m_saveFile("code_save", "Save As",
-                       "Source{.cpp,.h,.hpp,.c,.glsl,.vert,.frag,.hlsl,.py,.lua},"
-                       "Text & Data{.txt,.md,.json,.xml,.yaml},"
-                       "All Files{.*}",
-                       "untitled.glsl",
+            auto [filter, defaultName] = getDialogParams();
+            m_saveFile("code_save", "Save As", filter, defaultName,
                        [this](const std::string& path) {
                            m_filePath = path;
                            std::ofstream ofs(path);
@@ -138,12 +163,10 @@ void CodeEditorPanel::draw(bool& visible)
     auto doSaveAs = [&] {
         if (!m_saveFile)
             return;
-        m_saveFile("code_save_as", "Save As",
-                   "Source{.cpp,.h,.hpp,.c,.glsl,.vert,.frag,.hlsl,.py,.lua},"
-                   "Text & Data{.txt,.md,.json,.xml,.yaml},"
-                   "All Files{.*}",
-                   m_filePath.empty() ? "untitled.glsl"
-                                      : ofFilePath::getFileName(m_filePath),
+        auto [filter, defaultName] = getDialogParams();
+        const std::string fname = m_filePath.empty() ? defaultName
+                                                      : ofFilePath::getFileName(m_filePath);
+        m_saveFile("code_save_as", "Save As", filter, fname,
                    [this](const std::string& path) {
                        m_filePath = path;
                        std::ofstream ofs(path);
@@ -189,8 +212,8 @@ void CodeEditorPanel::draw(bool& visible)
                 doOpen();
             ImGui::Separator();
             bool noPath = m_filePath.empty();
-            ImGui::BeginDisabled(m_editor.IsReadOnlyEnabled());
-            if (ImGui::MenuItem(noPath ? "Save As..." : "Save", "Ctrl+S"))
+            ImGui::BeginDisabled(noPath || m_editor.IsReadOnlyEnabled());
+            if (ImGui::MenuItem("Save", "Ctrl+S"))
                 doSave();
             ImGui::EndDisabled();
             if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))

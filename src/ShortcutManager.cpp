@@ -1,5 +1,7 @@
 #include "ShortcutManager.h"
 
+#include "Runtime.h"
+
 #include "ofEvents.h"
 #include "ofFileUtils.h"
 #include "ofJson.h"
@@ -225,7 +227,7 @@ std::string ShortcutManager::formatBindingLabel(int key, int modifiers)
 
 std::string ShortcutManager::defaultBindingsPath()
 {
-    return ofToDataPath("ofxKit/shortcuts.json", true);
+    return Runtime::instance().dataPath("shortcuts.json");
 }
 
 bool ShortcutManager::loadBindingsFromFile(const std::string& path)

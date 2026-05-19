@@ -3,7 +3,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
-#include <ofxImGuiStyle/src/ofxImGuiStyle.h>
+#include <ofxImGuiStyle/src/ImFonts.h>
 #include <ofxImGuiStyle/src/IconsFontAwesome5.h>
 #include <algorithm>
 #include <cstdio>
@@ -202,7 +202,7 @@ void LayersPanel::drawLayerRow(entt::entity e, int depth, float totalW,
     if (showToggleCol) {
         if (hasChildren) {
             bool& collapsed = collapsed_[eKey];
-            if (ofxImGuiStyle::IconButtonGhost(
+            if (ImFonts::IconButtonGhost(
                     collapsed ? ICON_FA_CARET_RIGHT : ICON_FA_CARET_DOWN, "##tog"))
                 collapsed = !collapsed;
         } else {
@@ -213,7 +213,7 @@ void LayersPanel::drawLayerRow(entt::entity e, int depth, float totalW,
     }
 
     // Eye
-    if (ofxImGuiStyle::IconButtonGhost(
+    if (ImFonts::IconButtonGhost(
             lc.visible ? ICON_FA_EYE : ICON_FA_EYE_SLASH, "##eye")) {
         lc.visible = !lc.visible;
         if (onChanged_) onChanged_();
@@ -223,7 +223,7 @@ void LayersPanel::drawLayerRow(entt::entity e, int depth, float totalW,
     ImGui::SameLine();
 
     // Lock
-    if (ofxImGuiStyle::IconButtonGhost(
+    if (ImFonts::IconButtonGhost(
             lc.locked ? ICON_FA_LOCK : ICON_FA_LOCK_OPEN, "##lock"))
         lc.locked = !lc.locked;
     if (ImGui::IsItemHovered())
