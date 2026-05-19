@@ -1,0 +1,227 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, bleeding]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  OF_RELEASE: latest
+  OF_BRANCH: bleeding
+
+# ---------------------------------------------------------------------------
+# Addon dependency repos (all under github.com/ofxyz or github.com/ofKitty).
+# These are cloned once in a shared step and reused by examples and tests.
+# ---------------------------------------------------------------------------
+
+jobs:
+
+  # -------------------------------------------------------------------------
+  # Linux 64-bit — build examples + run unit tests
+  # -------------------------------------------------------------------------
+  build-linux64:
+    runs-on: ubuntu-24.04
+    env:
+      TARGET: linux64
+      OF_ROOT: ${{ github.workspace }}/openFrameworks
+
+    steps:
+      - name: Cache apt packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: >-
+            aptitude aptitude-common libboost-iostreams1.83.0 libcwidget4
+            libsigc++-2.0-0v5 libxapian30 fonts-wine{a} libasound2-plugins{a}
+            libcapi20-3t64{a} libosmesa6{a} libpcsclite1{a} libspeexdsp1{a}
+            libwine{a} libxkbregistry0{a} libz-mingw-w64{a} wine{a} wine64
+            wget2 make libjack-jackd2-0 libjack-jackd2-dev freeglut3-dev
+            libasound2-dev libxmu-dev libxxf86vm-dev g++ libgl1-mesa-dev
+            libglu1-mesa-dev libraw1394-dev libudev-dev libdrm-dev libglew-dev
+            libopenal-dev libsndfile1-dev libfreeimage-dev libcairo2-dev
+            libfreetype6-dev libpulse-dev libusb-1.0-0-dev libgtk2.0-dev
+            libopencv-dev libassimp-dev librtaudio-dev gdb libglfw3-dev
+            liburiparser-dev libpugixml-dev libgconf-2-4 libgtk2.0-0
+            libpoco-dev libxcursor-dev libxi-dev libxinerama-dev
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+            gstreamer1.0-libav gstreamer1.0-pulseaudio gstreamer1.0-x
+            gstreamer1.0-plugins-bad gstreamer1.0-alsa gstreamer1.0-plugins-base
+            gstreamer1.0-plugins-good
+          version: 1.0
+
+      - name: Checkout openFrameworks
+        uses: actions/checkout@v4
+        with:
+          repository: openframeworks/openFrameworks
+          ref: ${{ env.OF_BRANCH }}
+          path: openFrameworks
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.17
+        with:
+          key: linux64-ofxKit
+
+      - name: Download OF libs
+        run: |
+          cd $OF_ROOT
+          ./scripts/linux/download_libs.sh -t $OF_RELEASE -a 64gcc6
+
+      - name: Install OF system dependencies
+        run: sudo $OF_ROOT/scripts/linux/ubuntu/install_dependencies.sh -y
+
+      - name: Checkout ofxKit
+        uses: actions/checkout@v4
+        with:
+          path: openFrameworks/addons/ofxKit
+
+      - name: Checkout addon dependencies
+        run: |
+          cd $OF_ROOT/addons
+          git clone --depth 1 https://github.com/ofxyz/ofxEnTT.git            ofxEnTT
+          git clone --depth 1 https://github.com/ofKitty/ofxEnTTKit.git        ofxEnTTKit
+          git clone --depth 1 https://github.com/ofKitty/ofxEnTTInspector.git  ofxEnTTInspector
+          git clone --depth 1 https://github.com/ofxyz/ofxImGui.git            ofxImGui
+          git clone --depth 1 https://github.com/ofxyz/ofxImGuiStyle.git       ofxImGuiStyle
+          git clone --depth 1 https://github.com/ofxyz/ofxImGuiTextEdit.git    ofxImGuiTextEdit
+          git clone --depth 1 https://github.com/ofxyz/ofxImGuiFileDialog.git  ofxImGuiFileDialog
+          git clone --depth 1 https://github.com/ofxyz/ofxImGuiVectorEditor.git ofxImGuiVectorEditor
+          git clone --depth 1 https://github.com/ofxyz/ofxImGuizmo.git         ofxImGuizmo
+          git clone --depth 1 https://github.com/ofxyz/ofxMagicEnum.git        ofxMagicEnum
+          git clone --depth 1 https://github.com/ofxyz/ofxAudioFile.git        ofxAudioFile
+
+      - name: Build examples
+        run: |
+          echo "##[group]**** Building examples ****"
+          cd $OF_ROOT/addons/ofxKit
+          for example in example*/; do
+            example="${example%/}"
+            echo "##[group] $example"
+            cp $OF_ROOT/scripts/templates/linux64/Makefile  "$example/"
+            cp $OF_ROOT/scripts/templates/linux64/config.make "$example/"
+            cd "$example"
+            make -j$(nproc) DebugNoOF
+            cd ..
+            echo "##[endgroup]"
+          done
+          echo "##[endgroup]"
+
+      - name: Build and run tests
+        run: |
+          echo "##[group]**** Running unit tests ****"
+          cd $OF_ROOT/addons/ofxKit/tests
+          for group in */; do
+            group="${group%/}"
+            [ -d "$group" ] || continue
+            echo "##[group] $group"
+            for test_dir in "$group"/*/; do
+              test_dir="${test_dir%/}"
+              [ -d "$test_dir" ] || continue
+              echo "Building $test_dir"
+              cp $OF_ROOT/scripts/templates/linux64/Makefile   "$test_dir/"
+              cp $OF_ROOT/scripts/templates/linux64/config.make "$test_dir/"
+              (cd "$test_dir" && make -j2 DebugNoOF)
+              bin_name=$(basename "$test_dir")
+              gdb -batch -ex "run" -ex "bt" -ex "q \$_exitcode" \
+                  "$test_dir/bin/${bin_name}_debug"
+            done
+            echo "##[endgroup]"
+          done
+          echo "##[endgroup]"
+
+  # -------------------------------------------------------------------------
+  # Windows / MSYS2 mingw64 — build examples only (no headless gdb on Windows)
+  # -------------------------------------------------------------------------
+  build-msys2:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      TARGET: msys2
+
+    steps:
+      - name: Check system
+        shell: bash
+        run: gcc -v
+
+      - uses: msys2/setup-msys2@v2.27.0
+        with:
+          cache: true
+          release: true
+          update: true
+          msystem: mingw64
+          pacboy: >-
+            openssl:p python:p gcc:p assimp:p cairo:p curl:p freeglut:p
+            freeimage:p glew:p glfw:p glm:p libsndfile:p libusb:p libxml2:p
+            mpg123:p nlohmann-json:p openal:p opencv:p pugixml:p rtaudio:p
+            uriparser:p utf8cpp:p
+          install: >-
+            unzip
+            make
+
+      - name: Checkout openFrameworks
+        uses: actions/checkout@v4
+        with:
+          repository: openframeworks/openFrameworks
+          ref: ${{ env.OF_BRANCH }}
+          path: openFrameworks
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.17
+        with:
+          key: msys2-mingw64-ofxKit
+
+      - name: Install OF dependencies
+        run: |
+          cd openFrameworks
+          ./scripts/ci/msys2/install.sh --msystem=mingw64
+
+      - name: Download OF libs
+        run: |
+          cd openFrameworks
+          ./scripts/msys2/download_libs.sh --silent
+
+      - name: Checkout ofxKit
+        uses: actions/checkout@v4
+        with:
+          path: openFrameworks/addons/ofxKit
+
+      - name: Checkout addon dependencies
+        run: |
+          cd openFrameworks/addons
+          git clone --depth 1 https://github.com/ofxyz/ofxEnTT.git            ofxEnTT
+          git clone --depth 1 https://github.com/ofKitty/ofxEnTTKit.git        ofxEnTTKit
+          git clone --depth 1 https://github.com/ofKitty/ofxEnTTInspector.git  ofxEnTTInspector
+          git clone --depth 1 https://github.com/ofxyz/ofxImGui.git            ofxImGui
+          git clone --depth 1 https://github.com/ofxyz/ofxImGuiStyle.git       ofxImGuiStyle
+          git clone --depth 1 https://github.com/ofxyz/ofxImGuiTextEdit.git    ofxImGuiTextEdit
+          git clone --depth 1 https://github.com/ofxyz/ofxImGuiFileDialog.git  ofxImGuiFileDialog
+          git clone --depth 1 https://github.com/ofxyz/ofxImGuiVectorEditor.git ofxImGuiVectorEditor
+          git clone --depth 1 https://github.com/ofxyz/ofxImGuizmo.git         ofxImGuizmo
+          git clone --depth 1 https://github.com/ofxyz/ofxMagicEnum.git        ofxMagicEnum
+          git clone --depth 1 https://github.com/ofxyz/ofxAudioFile.git        ofxAudioFile
+
+      - name: Build examples
+        run: |
+          echo "##[group]**** Building examples ****"
+          cd openFrameworks/addons/ofxKit
+          for example in example*/; do
+            example="${example%/}"
+            echo "##[group] $example"
+            cp ../../../scripts/templates/msys2/Makefile   "$example/"
+            cp ../../../scripts/templates/msys2/config.make "$example/"
+            cd "$example"
+            make -j$(nproc) DebugNoOF
+            cd ..
+            echo "##[endgroup]"
+          done
+          echo "##[endgroup]"

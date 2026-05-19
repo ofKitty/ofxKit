@@ -15,6 +15,19 @@ Press **Cmd-E** at runtime to toggle the overlay (`Ctrl-E` is also registered as
 - Provides a live ImGui inspector overlay (powered by `ofxEnTTInspector`) in Edit Mode
 - Exposes entity selection state (`ofkitty::runtime().selected()`)
 
+### Registered ImGui windows
+
+Sketches register dockable Inspector panels via `Runtime::registerWindow` — either with a **lambda** or (when the window-class headers are present in your ofxKit checkout) by subclassing **`KitRegisteredWindow`**, the same typed shape as **ofxBapp**'s **`bapp::baseWindow`**. See **[docs/windows.md](docs/windows.md)** for lambdas, **`KitPropertyBag`** / **baseProp** parity, and the optional **ofxBapp** bridge include.
+
+Built-in windows (Scene, Properties, Toolbar, Shortcuts, Preferences, Code Editor, Path Editor) are **opt-in by default** — none are registered unless you ask for them. Call any of these before `ofRunApp()`:
+
+```cpp
+runtime().enableBuiltInWindows();           // Scene + Properties (standard set)
+runtime().enableBuiltInWindow("Toolbar");   // one at a time (additive)
+runtime().enableAllBuiltInWindows();        // all built-in panels
+runtime().disableBuiltInWindows();          // reset to default (none)
+```
+
 ---
 
 ## How attach works
@@ -74,19 +87,14 @@ void ofApp::setup() {
 
 ### App-owned registry
 
-Use this when your app already owns the ECS state and you want ofxKit to inspect it.
+When your app owns the ECS state, pass it to `attach` so the Runtime's inspector, status bar, and Scene panel all see the same entities:
 
 ```cpp
 // ofApp.h
-#pragma once
-#include "ofMain.h"
-#include "ofxKit.h"
-
 class ofApp : public ofBaseApp {
 public:
     entt::registry& registry() { return m_registry; }
     void setup() override;
-
 private:
     entt::registry m_registry;
 };
@@ -94,11 +102,12 @@ private:
 
 ```cpp
 // main.cpp
-auto window = ofCreateWindow(settings);
 auto app = std::make_shared<ofApp>();
 ofkitty::Runtime::attach(window, app, app->registry());
 ofRunApp(window, std::move(app));
 ```
+
+If you omit the registry argument, `runtime().registry()` returns Runtime's own internal registry — only use that path if your app creates all entities via `runtime().registry()` directly.
 
 ---
 
@@ -163,19 +172,24 @@ void ofApp::setup() {
 
 ### Components and systems
 
-Component and system registration should follow the same rule: addons opt in, `ofxKit` orchestrates, and core addons do not gain UI/runtime dependencies by accident.
+Built-in **"+ Add Component"** picker rows for shipped **`ecs::*`** types come from **ofxEnTTKit** (`ecs::registerKitComponentMenu`), which `ofxKit` forwards into `runtime().registerComponent(...)` at startup. Component **property** panels stay type-driven via **ofxEnTTInspector**.
 
-The intended component API should replace closed inspector lists with registered component metadata:
+Addons extend the picker by registering their own types:
 
 ```cpp
-ofkitty::runtime().registerComponent<grbl::MachineStateComponent>({
-    .name = "Machine State",
-    .inspect = [](entt::registry& registry, entt::entity entity) {
-        auto& state = registry.get<grbl::MachineStateComponent>(entity);
-        ImGui::Text("State: %s", state.label.c_str());
-    },
-});
+// minimal — has / remove generated automatically from T
+ofkitty::runtime().registerComponent<grbl::MachineStateComponent>(
+    "Machine State", "Machines");
+
+// custom add — when default emplace<T>(entity) needs extra work
+ofkitty::runtime().registerComponent<grbl::MachineStateComponent>(
+    "Machine State", "Machines",
+    [](entt::registry& r, entt::entity e) {
+        r.emplace<grbl::MachineStateComponent>(e).connect("/dev/ttyUSB0");
+    });
 ```
+
+See [`docs/component-registry.md`](docs/component-registry.md) for the full API including full-control registration, query helpers, and the built-in category list.
 
 The intended system API should let kit addons register lifecycle systems against the active registry:
 
@@ -198,14 +212,44 @@ SystemRegistry       setup/update/draw/cleanup lifecycle orchestration
 ### `ofkitty::Runtime`
 
 
-| Member                   | Description                                                           |
-| ------------------------ | --------------------------------------------------------------------- |
-| `Runtime::instance()`    | Returns the singleton                                                 |
-| `runtime()`              | Free-function shorthand for `Runtime::instance()`                     |
-| `runtime().registry()`   | The active `entt::registry` (owned by runtime or supplied by the app) |
-| `runtime().selected()`   | Currently selected entity (`entt::null` if none)                      |
-| `runtime().select(e)`    | Programmatically select an entity                                     |
-| `runtime().isEditMode()` | Whether the overlay is currently visible                              |
+| Member                                           | Description                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------------ |
+| `Runtime::instance()`                            | Returns the singleton                                                    |
+| `runtime()`                                      | Free-function shorthand for `Runtime::instance()`                        |
+| `runtime().registry()`                           | The active `entt::registry` (owned by runtime or supplied by the app)    |
+| `runtime().selected()`                           | Currently selected entity (`entt::null` if none)                         |
+| `runtime().select(e)`                            | Programmatically select an entity                                        |
+| `runtime().isEditMode()`                         | Whether the overlay is currently visible                                 |
+| `runtime().toggleEditMode()`                     | Toggle Edit mode on/off                                                  |
+| `runtime().setAppName(name)`                     | Sets the name shown in the menu bar and status bar                       |
+| `runtime().registerWindow(w)`                    | Register a dockable UI panel (appears in the View menu)                  |
+| `runtime().disableBuiltInWindows()`              | Reset to default: no built-in windows registered                         |
+| `runtime().enableBuiltInWindow(nameOrId)`        | Opt in to one specific built-in window (additive)                        |
+| `runtime().enableBuiltInWindows()`               | Register the standard set: Scene + Properties                            |
+| `runtime().enableAllBuiltInWindows()`            | Register all built-in windows                                            |
+| `runtime().addMenuBarGroup(name, cb)`            | Add a top-level menu group to the main menu bar                          |
+| `runtime().registerComponent<T>(name, cat)`      | Register a component type in the Add Component picker (template form)    |
+| `runtime().registerComponent(desc)`              | Register a component with explicit has/add/remove lambdas                |
+| `runtime().componentDescriptors()`               | All registered `ComponentDescriptor` entries in registration order       |
+| `runtime().componentCategories()`               | Unique category names in registration order                              |
+| `runtime().showRulers()`                         | Whether pixel rulers are visible                                         |
+| `runtime().setShowRulers(bool)`                  | Show/hide the pixel ruler overlay                                        |
+| `runtime().toggleRulers()`                       | Toggle ruler visibility (also bound to F2)                               |
+| `runtime().setViewportRenderer(fn)`              | Register the scene-draw callback for the secondary Viewport panel        |
+| `runtime().clearViewportRenderer()`              | Remove the viewport renderer (panel shows a placeholder)                 |
+| `runtime().registerPreferencePage(page)`         | Add a page to the Preferences window (built-ins + addon pages)           |
+| `runtime().unregisterPreferencePage(id)`         | Remove a preference page by id                                           |
+| `runtime().registerStatusItem(item)`             | Push an item into the status bar (compact draw callback)                 |
+| `runtime().unregisterStatusItem(id)`             | Remove a status bar item by id                                           |
+| `runtime().openFileDialog(key,title,flt,cb)`     | Open a file-open dialog; `cb` fires with the chosen path on confirm      |
+| `runtime().saveFileDialog(key,title,flt,fn,cb)`  | Open a file-save dialog; `cb` fires with the chosen path on confirm      |
+| `runtime().setSceneCamera(cam)`                  | Provide the main-scene camera so the gizmo can be drawn on it            |
+| `runtime().clearSceneCamera()`                   | Remove the scene camera reference                                        |
+| `runtime().setGizmoOperation(op)`                | Set gizmo mode: Translate / Rotate / Scale / Universal (W/E/R shortcuts) |
+| `runtime().setGizmoMode(mode)`                   | Set gizmo space: World / Local (X shortcut)                              |
+| `runtime().codeEditorSetText(src)`               | Seed the Code Editor with a source string                                |
+| `runtime().codeEditorGetText()`                  | Read back the current Code Editor contents                               |
+| `runtime().codeEditorSetLanguage(lang)`          | Set syntax-highlighting language (GLSL, C++, Lua, Python, …)            |
 
 
 ### `ofkitty::Runtime::attach(window, app)`
@@ -220,7 +264,7 @@ ofRunApp(window, std::move(app));
 
 ### `ofkitty::Runtime::attach(window, app, registry)`
 
-Call this when the app owns the ECS registry:
+Pass your app's registry when the app owns ECS state. The Runtime's inspector, status bar, and Scene panel all read from this registry:
 
 ```cpp
 ofkitty::Runtime::attach(window, app, app->registry());
@@ -235,6 +279,7 @@ For a vanilla openFrameworks project using `addons.make`, add:
 ```make
 ofxEnTT
 ofxImGui
+ofxImGuiStyle
 ofxEnTTKit
 ofxEnTTInspector
 ofxKit
@@ -247,6 +292,7 @@ ofxKit
 | `ofxEnTTKit`       | ECS components for OF types + `ofxNode` + `TransformSystem` |
 | `ofxEnTTInspector` | ImGui inspector panels for ECS components                   |
 | `ofxImGui`         | ImGui integration for openFrameworks                        |
+| `ofxImGuiStyle`    | Theme registry (`ImTheme`) + bundled fonts/icons (`ImFonts`) |
 
 
 In the ofKitty distribution, install/update these dependencies with:
@@ -264,6 +310,32 @@ In the ofKitty distribution, install/update these dependencies with:
 | ------ | ------------------------ |
 | Cmd-E  | Toggle Edit mode overlay |
 | Ctrl-E | Toggle Edit mode overlay |
+| F2     | Toggle Rulers            |
+| TAB    | Toggle Edit mode (built-in alias; suppressed when ImGui has keyboard focus) |
+| W      | Gizmo: Translate (while in Edit mode) |
+| E      | Gizmo: Rotate (while in Edit mode)    |
+| R      | Gizmo: Scale (while in Edit mode)     |
+| X      | Gizmo: Toggle World / Local space     |
+
+Gizmo modes are also under **Edit** in the menu bar (Edit mode only). Enabling the **Toolbar** built-in adds the same tools as icon buttons plus **View → Toolbar** to show or hide the panel.
+
+
+---
+
+## Docs
+
+| File                                                          | Topic                                               |
+|---------------------------------------------------------------|-----------------------------------------------------|
+| [`docs/component-registry.md`](docs/component-registry.md)   | ComponentRegistry API, addon registration, picker   |
+| [`docs/scene-window.md`](docs/scene-window.md)               | Scene hierarchy tree, ofxNode traversal, selection  |
+| [`docs/layers-panel.md`](docs/layers-panel.md)               | LayersPanel tree, ReorderDragDrop, LayerSystem      |
+| [`docs/status-bar.md`](docs/status-bar.md)                   | Status bar layout and implementation notes          |
+| [`docs/preferences.md`](docs/preferences.md)                 | App Preferences window — all OF settings            |
+| [`docs/appearance.md`](docs/appearance.md)                   | Theme/font integration with `ofxImGuiStyle` (`ImTheme` / `ImFonts`) |
+| [`docs/rulers.md`](docs/rulers.md)                           | Rulers overlay — pixel coordinates + mouse tracking |
+| [`docs/viewport-window.md`](docs/viewport-window.md)         | Secondary Viewport panel — FBO, camera controls     |
+| [`docs/tools.md`](docs/tools.md)                             | File dialog, Gizmo, Code Editor, Path Editor        |
+| [`docs/dockspace.md`](docs/dockspace.md)                     | Dockspace central node — passthrough vs opaque      |
 
 
 ---
@@ -289,4 +361,3 @@ openFrameworks app
   ├── ofxImGui            — ImGui window management
   └── ofxKit              — runtime singleton + Edit mode
 ```
-

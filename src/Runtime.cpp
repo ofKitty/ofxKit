@@ -1,18 +1,16 @@
 #include "Runtime.h"
+#include "panels/CodeEditorPanel.h"
+#include "panels/PathEditorPanel.h"
+#include "ProgressWindow.h"
+#include "Runtime_private.h"
 
-#include <ofxEnTTInspector/src/ofxEnTTInspector.h>
 #include "ofJson.h"
+#include "imgui_internal.h"   // DockBuilder API
 
-#include <algorithm>
-#include <cctype>
+#include <cmath>
+#include <cstdint>
 #include <fstream>
-
-// GLFW is the desktop OF window backend and is what ofxImGui uses too.
-// Skip on mobile / RPi targets where GLFW isn't present.
-#if !defined(TARGET_OPENGLES) && !defined(TARGET_RASPBERRY_PI)
-#  define OFXKIT_HAS_GLFW 1
-#  include <GLFW/glfw3.h>
-#endif
+#include <functional>
 
 namespace ofkitty {
 
@@ -51,12 +49,13 @@ void Runtime::attachInternal(shared_ptr<ofAppBaseWindow> /*window*/,
     if (m_attached) return;
 
     m_registryView = &registry;
-    m_selected = entt::null;
-    m_attached = true;
+    m_selected     = entt::null;
+    m_attached     = true;
 
     ofAddListener(ofEvents().setup,      this, &Runtime::onSetup,      OF_EVENT_ORDER_AFTER_APP);
     ofAddListener(ofEvents().update,     this, &Runtime::onUpdate,     OF_EVENT_ORDER_AFTER_APP);
     ofAddListener(ofEvents().draw,       this, &Runtime::onDraw,       OF_EVENT_ORDER_AFTER_APP);
+    ofAddListener(ofEvents().exit,       this, &Runtime::onExit,       OF_EVENT_ORDER_AFTER_APP);
     ofAddListener(ofEvents().keyPressed, this, &Runtime::onShortcutCaptureBeforeApp,
                   OF_EVENT_ORDER_BEFORE_APP);
     ofAddListener(ofEvents().keyPressed, this, &Runtime::onKeyPressed, OF_EVENT_ORDER_AFTER_APP);
@@ -70,6 +69,15 @@ void Runtime::onSetup(ofEventArgs&)
 {
     ensureAppName();
     registerBuiltInWindows();
+    registerBuiltInComponents();
+    registerBuiltInPreferencePages();
+    registerBuiltInStatusItems();
+    ProgressWindow::instance().attachStatusBarItem();
+    loadAppPrefs();
+
+    // F2 to toggle rulers
+    m_shortcuts.bind(OF_KEY_F2, 0, "Toggle Rulers",
+                     [this] { toggleRulers(); });
 
     ImGuiConfigFlags imguiFlags = ImGuiConfigFlags_DockingEnable;
 #ifndef TARGET_OPENGLES
@@ -77,22 +85,57 @@ void Runtime::onSetup(ofEventArgs&)
 #endif
     m_gui.setup(nullptr, false, imguiFlags, true);
 
-    // If a custom ini path was registered before setup, apply it now that
-    // the ImGui context exists.
-    if (!m_imguiIniPath.empty()) {
-        ImGui::GetIO().IniFilename = m_imguiIniPath.c_str();
+    // Load Input Sans + Font Awesome icons so toolbar / UI can use FA glyphs.
+    // Must happen right after gui.setup() before the first frame renders.
+    if (ImFont* font = ImFonts::LoadDefaultFonts(ImGui::GetIO().Fonts, 14.0f))
+        m_gui.setDefaultFont(font);
+    m_gui.rebuildFontsTexture();
+
+    // Register event filters that block OF mouse/keyboard events from reaching
+    // the app while ImGui has claimed them.  Must happen after m_gui.setup()
+    // so the ImGui context exists when the first WantCaptureMouse check fires.
+    m_eventHelper.setup();
+
+    // Keep docking/layout state in a stable app data location. ImGui's default
+    // "imgui.ini" is relative to the process working directory, which can
+    // change depending on how the example is launched.
+    if (m_imguiIniPath.empty()) {
+        m_imguiIniPath = dataPath("imgui.ini");
+    }
+    detail::createParentDirectoryIfNeeded(m_imguiIniPath);
+    ImGui::GetIO().IniFilename = m_imguiIniPath.c_str();
+    if (of::filesystem::exists(of::filesystem::path(m_imguiIniPath))) {
+        ImGui::LoadIniSettingsFromDisk(m_imguiIniPath.c_str());
     }
 
-    // Apply theme first (loads persisted choice if any), then capture the
-    // base style with theme colours, then layer the scale on top.
-    if (!m_themeSet) loadThemePref();
-    applyTheme();
+    if (!m_codeEditor) {
+        m_codeEditor = std::make_unique<CodeEditorPanel>();
+        m_codeEditor->setup();
+        m_codeEditor->setDialogCallbacks(
+            [this](const std::string& key, const std::string& title, const std::string& filters,
+                   std::function<void(const std::string& path)> onConfirm) {
+                openFileDialog(key, title, filters, std::move(onConfirm));
+            },
+            [this](const std::string& key, const std::string& title, const std::string& filters,
+                   const std::string&                     defaultFileName,
+                   std::function<void(const std::string& path)> onConfirm) {
+                saveFileDialog(key, title, filters, defaultFileName, std::move(onConfirm));
+            });
+    }
+    if (!m_pathEditor) {
+        m_pathEditor = std::make_unique<PathEditorPanel>();
+    }
 
-    m_baseStyle          = ImGui::GetStyle();
-    m_baseStyleCaptured  = true;
+    // Apply the persisted theme through ImTheme, then capture that unscaled
+    // baseline before ofxKit layers editor-scale policy on top.
+    if (!m_themeSet)
+        loadThemePref();
+    applyTheme();
+    ImTheme::CaptureBaseStyle();
 
     // Auto-detect HiDPI / 4K scale unless the user explicitly set one
-    // before setup, or a saved preference exists in bin/data/ofxKit/.
+    // before setup, or a saved preference exists in bin/data/ (or the
+    // configured dataSubdir()).
     if (!m_uiScaleSet) {
         loadUIScalePref();
     }
@@ -104,7 +147,8 @@ void Runtime::onSetup(ofEventArgs&)
     for (auto& hook : m_postSetupHooks)
         hook(m_gui);
 
-    // Built-in shortcut — defaults + optional merge from data/ofxKit/shortcuts.json
+    // Built-in shortcut — defaults + optional merge from data/shortcuts.json
+    // (or `<dataSubdir()>/shortcuts.json`).
     m_shortcuts.setAutoSaveEnabled(false);
 #ifdef TARGET_OSX
     constexpr int kToggleEditMod = OF_KEY_COMMAND;
@@ -115,8 +159,51 @@ void Runtime::onSetup(ofEventArgs&)
         "ofkitty.toggle_edit",
         'e',
         kToggleEditMod,
-        "Toggle Edit mode",
-        [this] { toggleEditMode(); });
+        "Toggle All UI (windows + menu bar + status bar)",
+        [this] { toggleAllUI(); });
+
+    m_shortcuts.registerAction(
+        "ofkitty.toggle_edit_tab",
+        OF_KEY_TAB,
+        0,
+        "Toggle Edit-mode windows only",
+        [this] {
+            // Block only when a text-input widget has focus so Tab still works
+            // for toggling windows even when ImGui panels are visible.
+            if (!ImGui::GetIO().WantTextInput)
+                toggleEditMode();
+        });
+
+    // Gizmo operation shortcuts (only fire when edit mode is active)
+    m_shortcuts.registerAction("ofkitty.gizmo_translate", 'w', 0,
+                               "Gizmo: Translate",
+                               [this] {
+                                   if (m_editMode)
+                                       m_gizmoOp = GizmoOperation::Translate;
+                               });
+    m_shortcuts.registerAction("ofkitty.gizmo_rotate", 'e', 0,
+                               "Gizmo: Rotate",
+                               [this] {
+                                   if (m_editMode)
+                                       m_gizmoOp = GizmoOperation::Rotate;
+                               });
+    m_shortcuts.registerAction("ofkitty.gizmo_scale", 'r', 0,
+                               "Gizmo: Scale",
+                               [this] {
+                                   if (m_editMode)
+                                       m_gizmoOp = GizmoOperation::Scale;
+                               });
+    m_shortcuts.registerAction(
+        "ofkitty.gizmo_mode_toggle",
+        'x',
+        0,
+        "Gizmo: Toggle World/Local",
+        [this] {
+            if (m_editMode)
+                m_gizmoMode = (m_gizmoMode == GizmoMode::World) ? GizmoMode::Local
+                                                                : GizmoMode::World;
+        });
+
     m_shortcuts.loadBindingsFromFile(ShortcutManager::defaultBindingsPath());
     m_shortcuts.setAutoSaveEnabled(true);
 }
@@ -126,9 +213,81 @@ void Runtime::onUpdate(ofEventArgs&)
     // Future: TransformSystem, physics, etc.
 }
 
+void Runtime::onExit(ofEventArgs&)
+{
+    // Ensure imgui.ini and our prefs are written before the process ends.
+    // ImGui's auto-save has a 5-second delay so the last docking state can
+    // otherwise be lost if the window is closed quickly.
+    saveAppPrefs();
+}
+
+void Runtime::toggleEditMode()
+{
+    const int f = ofGetFrameNum();
+    if (m_toggleEditLastFrame == f) {
+        return;
+    }
+    m_toggleEditLastFrame = f;
+
+    // Tab always reveals chrome so the menu bar and status bar stay visible.
+    // This also ensures Tab works correctly when Ctrl+E previously hid everything:
+    // pressing Tab brings back the full UI (chrome + windows).
+    m_hideChrome = false;
+    m_editMode   = !m_editMode;
+    ofLogNotice("ofxKit") << "Edit mode (windows) " << (m_editMode ? "ON" : "OFF");
+}
+
+void Runtime::toggleAllUI()
+{
+    const int f = ofGetFrameNum();
+    if (m_toggleEditLastFrame == f) {
+        return;
+    }
+    m_toggleEditLastFrame = f;
+
+    if (m_prefs.hideAllUI) {
+        // "Hide entire UI" mode: toggle chrome and windows together.
+        // Use m_hideChrome as the primary toggle so this is idempotent even if
+        // Tab was pressed beforehand (m_editMode may already be false).
+        m_hideChrome = !m_hideChrome;
+        m_editMode   = !m_hideChrome;
+        ofLogNotice("ofxKit") << "All UI " << (!m_hideChrome ? "shown" : "hidden");
+    } else {
+        // "Hide windows only" mode: same as Tab — chrome always stays visible.
+        m_hideChrome = false;
+        m_editMode   = !m_editMode;
+        ofLogNotice("ofxKit") << "Edit mode (windows) " << (m_editMode ? "ON" : "OFF");
+    }
+}
+
+void Runtime::disableBuiltInWindows()
+{
+    m_autoRegisterBuiltIns = false;
+    m_requestedBuiltInWindows.clear();
+}
+
+void Runtime::enableBuiltInWindow(const std::string& nameOrId)
+{
+    m_autoRegisterBuiltIns = false;
+    m_requestedBuiltInWindows.insert(nameOrId);
+}
+
+void Runtime::enableBuiltInWindows()
+{
+    enableBuiltInWindow("Scene");
+    enableBuiltInWindow("Properties");
+}
+
+void Runtime::enableAllBuiltInWindows()
+{
+    m_autoRegisterBuiltIns = true;
+    m_requestedBuiltInWindows.clear();
+}
+
 void Runtime::onDraw(ofEventArgs&)
 {
-    if (m_windows.empty()) return;
+    if (m_windows.empty())
+        return;
     drawOverlay();
 }
 
@@ -145,7 +304,7 @@ void Runtime::onKeyPressed(ofKeyEventArgs& e)
         m_skipShortcutDispatch = false;
         return;
     }
-    m_shortcuts.dispatch(e.key);
+    m_shortcuts.dispatch(e);
 }
 
 // ============================================================================
@@ -156,21 +315,121 @@ void Runtime::drawOverlay()
 {
     m_gui.begin();
 
-    renderMainMenuBar();
-    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
+    // Menu bar — hidden when m_hideChrome is set (toggled by Ctrl/Cmd+E via
+    // toggleAllUI).  Tab clears m_hideChrome so chrome is always visible after Tab.
+    const bool showChrome = !m_hideChrome;
+    if (showChrome)
+        renderMainMenuBar();
 
-    for (auto& window : m_windows) {
-        if (window.visible && window.draw) {
-            if (!window.editModeOnly || m_editMode)
-                window.draw(window.visible);
+    if (m_editMode)
+        ImGuizmo::BeginFrame();
+
+    // Status bar follows the same chrome rule as the menu bar.
+    if (showChrome)
+        drawStatusBar();
+
+    // The dockspace is created unconditionally on every frame so that ImGui's
+    // saved-ini dock state (node IDs, splits, window positions) is always
+    // backed by a live dockspace.  Without this, ImGui loads the dock nodes
+    // from the .ini file but never finds the host window, which can leave
+    // orphaned nodes in an inconsistent state and segfault on early frames.
+    //
+    // In non-edit mode the central node is forced to PassthruCentralNode so
+    // the OF background renders through cleanly; in edit mode the app's own
+    // m_passthruCentralNode preference is honoured.
+    {
+        ImGuiDockNodeFlags dsFlags = ImGuiDockNodeFlags_NoDockingOverCentralNode;
+        if (!m_editMode || m_passthruCentralNode)
+            dsFlags |= ImGuiDockNodeFlags_PassthruCentralNode;
+        ImGuiID dockId = ImGui::DockSpaceOverViewport(
+            0, ImGui::GetMainViewport(), dsFlags);
+
+        if (!m_defaultLayoutBuilt) {
+            bool noIni = true;
+            if (const char* iniPath = ImGui::GetIO().IniFilename)
+                noIni = !of::filesystem::exists(of::filesystem::path(iniPath));
+
+            if (noIni || m_layoutResetPending) {
+                buildDefaultDockLayout(dockId);
+                m_layoutResetPending = false;
+            }
+            m_defaultLayoutBuilt = true;
+        }
+
+        if (ImGuiDockNode* cn = ImGui::DockBuilderGetCentralNode(dockId)) {
+            // Only suppress the tab bar when no app windows are seeded into the
+            // central node. When a window like Preview is docked there it needs
+            // its own title/menu bar to be visible.
+            if (m_defaultLayoutExtraCenterDocks.empty())
+                cn->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
+            if (!m_editMode || m_passthruCentralNode)
+                cn->LocalFlags |= ImGuiDockNodeFlags_PassthruCentralNode
+                               |  ImGuiDockNodeFlags_NoDockingOverCentralNode;
+        }
+
+        if (m_editMode) {
+            if (m_showRulers)
+                drawRulers();
+            drawGizmoOverlay();
         }
     }
 
+    for (auto& window : m_windows) {
+        if (window.visible && window.draw) {
+            if (!window.editModeOnly || m_editMode) {
+                bool prev = window.visible;
+                ImGui::PushID(window.id.c_str());
+                window.draw(window.visible);
+                ImGui::PopID();
+                if (window.visible != prev)
+                    saveAppPrefs();
+            }
+        }
+    }
+
+    processFileDialogs();
+
     m_gui.end();
-    // Manual draw mode requires explicit draw() to render the frame.
-    // Without this, Gui::end() only calls ImGui::EndFrame() and nothing
-    // is ever submitted to OpenGL — invisible menu bar / windows.
     m_gui.draw();
+
+    if (m_sceneEasyCam) {
+        m_sceneViewport.update(*m_sceneEasyCam);
+        const bool wantsInput = m_sceneViewport.isHovered() && !isGizmoActive();
+        if (wantsInput)
+            m_sceneEasyCam->enableMouseInput();
+        else
+            m_sceneEasyCam->disableMouseInput();
+    }
+}
+
+void Runtime::renderGizmoMenu()
+{
+    if (!ImGui::BeginMenu("Edit"))
+        return;
+
+    if (ImGui::MenuItem("Translate", "W", m_gizmoOp == GizmoOperation::Translate))
+        m_gizmoOp = GizmoOperation::Translate;
+    if (ImGui::MenuItem("Rotate", "E", m_gizmoOp == GizmoOperation::Rotate))
+        m_gizmoOp = GizmoOperation::Rotate;
+    if (ImGui::MenuItem("Scale", "R", m_gizmoOp == GizmoOperation::Scale))
+        m_gizmoOp = GizmoOperation::Scale;
+    if (ImGui::MenuItem("Universal", nullptr, m_gizmoOp == GizmoOperation::Universal))
+        m_gizmoOp = GizmoOperation::Universal;
+
+    ImGui::Separator();
+
+    if (ImGui::MenuItem("World Space", nullptr, m_gizmoMode == GizmoMode::World))
+        m_gizmoMode = GizmoMode::World;
+    if (ImGui::MenuItem("Local Space", nullptr, m_gizmoMode == GizmoMode::Local))
+        m_gizmoMode = GizmoMode::Local;
+
+    ImGui::Separator();
+
+    if (ImGui::MenuItem("Toggle World / Local", "X"))
+        m_gizmoMode = (m_gizmoMode == GizmoMode::World) ? GizmoMode::Local
+                                                          : GizmoMode::World;
+
+    ImGui::EndMenu();
 }
 
 void Runtime::renderMainMenuBar()
@@ -181,23 +440,39 @@ void Runtime::renderMainMenuBar()
 
         if (ImGui::BeginMenu(m_appName.c_str())) {
             if (m_editMode) {
-                if (ImGui::MenuItem("Hide Edit Mode", "Cmd+E")) {
+                if (ImGui::MenuItem("Hide Edit Mode", "Ctrl/Cmd+E")) {
                     setEditMode(false);
                 }
             } else {
-                if (ImGui::MenuItem("Show Edit Mode", "Cmd+E")) {
+                if (ImGui::MenuItem("Show Edit Mode", "Ctrl/Cmd+E")) {
                     setEditMode(true);
                 }
             }
-
+            ImGui::Separator();
+            if (ImGui::MenuItem("Preferences...")) {
+                setWindowVisible("Preferences", true);
+            }
             ImGui::Separator();
             if (ImGui::BeginMenu("Theme")) {
-                if (ImGui::MenuItem("Enhanced Dark",  nullptr, m_theme == Theme::EnhancedDark))  setTheme(Theme::EnhancedDark);
-                if (ImGui::MenuItem("Enhanced Light", nullptr, m_theme == Theme::EnhancedLight)) setTheme(Theme::EnhancedLight);
+                // Quick-pick subset of ImTheme built-ins. The full selector
+                // (all 17 built-ins + addon-registered customs) lives in
+                // Preferences > Appearance via ImTheme::ShowSelector.
+                struct QuickPick { ImTheme::Theme_ id; const char* label; };
+                static constexpr QuickPick picks[] = {
+                    {ImTheme::Theme_DarculaDarker,   "Darcula Darker"},
+                    {ImTheme::Theme_Darcula,         "Darcula"},
+                    {ImTheme::Theme_ImGuiColorsDark, "ImGui Dark"},
+                    {ImTheme::Theme_MaterialFlat,    "Material Flat"},
+                    {ImTheme::Theme_LightRounded,    "Light Rounded"},
+                    {ImTheme::Theme_ImGuiColorsLight,"ImGui Light"},
+                };
+                for (const auto& p : picks) {
+                    const char* id = ImTheme::Name(p.id);
+                    if (ImGui::MenuItem(p.label, nullptr, m_themeId == id))
+                        setTheme(id);
+                }
                 ImGui::Separator();
-                if (ImGui::MenuItem("ImGui Dark",     nullptr, m_theme == Theme::Dark))          setTheme(Theme::Dark);
-                if (ImGui::MenuItem("ImGui Light",    nullptr, m_theme == Theme::Light))         setTheme(Theme::Light);
-                if (ImGui::MenuItem("ImGui Classic",  nullptr, m_theme == Theme::Classic))       setTheme(Theme::Classic);
+                ImGui::MenuItem("More themes in Preferences \xe2\x80\xa6", nullptr, false, false);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("UI Scale")) {
@@ -206,21 +481,27 @@ void Runtime::renderMainMenuBar()
                     setUIScale(scale);
                 }
                 ImGui::Separator();
-                struct { const char* label; float value; } presets[] = {
-                    { "1.0x  (native)",   1.0f },
-                    { "1.25x (mid HiDPI)", 1.25f },
-                    { "1.5x  (HiDPI)",    1.5f  },
-                    { "2.0x  (4K)",       2.0f  },
-                    { "2.5x  (4K large)", 2.5f  },
+                struct {
+                    const char* label;
+                    float       value;
+                } presets[] = {
+                    {"1.0x  (native)", 1.0f},
+                    {"1.25x (mid HiDPI)", 1.25f},
+                    {"1.5x  (HiDPI)", 1.5f},
+                    {"2.0x  (4K)", 2.0f},
+                    {"2.5x  (4K large)", 2.5f},
                 };
                 for (auto& p : presets) {
                     bool sel = std::fabs(m_uiScale - p.value) < 0.01f;
-                    if (ImGui::MenuItem(p.label, nullptr, sel)) setUIScale(p.value);
+                    if (ImGui::MenuItem(p.label, nullptr, sel))
+                        setUIScale(p.value);
                 }
                 ImGui::Separator();
-                float autoScale = detectUIScale();
-                std::string autoLabel = "Auto-detect (" + ofToString(autoScale, 2) + "x)";
-                if (ImGui::MenuItem(autoLabel.c_str())) setUIScale(autoScale);
+                float       autoScale = detectUIScale();
+                std::string autoLabel =
+                    "Auto-detect (" + ofToString(autoScale, 2) + "x)";
+                if (ImGui::MenuItem(autoLabel.c_str()))
+                    setUIScale(autoScale);
                 ImGui::EndMenu();
             }
 
@@ -231,21 +512,44 @@ void Runtime::renderMainMenuBar()
             ImGui::EndMenu();
         }
 
-        // Registered external groups (File, Edit, etc. from ofxBapp)
         for (auto& [groupName, cb] : m_menuGroups) {
             if (ImGui::BeginMenu(groupName.c_str())) {
+                ImGui::PushID(groupName.c_str());
                 cb();
+                ImGui::PopID();
                 ImGui::EndMenu();
             }
         }
 
-        // Raw callbacks — each handles its own BeginMenu/EndMenu calls
-        for (auto& cb : m_menuBarRawCallbacks) cb();
+        for (size_t i = 0; i < m_menuBarRawCallbacks.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            m_menuBarRawCallbacks[i]();
+            ImGui::PopID();
+        }
+
+        if (m_editMode)
+            renderGizmoMenu();
 
         if (ImGui::BeginMenu("View")) {
             for (auto& window : m_windows) {
                 if (window.menuGroup == "View") {
+                    bool prev = window.visible;
                     ImGui::MenuItem(window.name.c_str(), nullptr, &window.visible);
+                    if (window.visible != prev)
+                        saveAppPrefs();
+                }
+            }
+            if (m_editMode) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("New Scene View")) {
+                    addViewportWindow();
+                }
+                ImGui::Separator();
+                ImGui::MenuItem("Rulers", "F2", &m_showRulers);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Reset Layout")) {
+                    m_defaultLayoutBuilt = false;
+                    m_layoutResetPending = true;
                 }
             }
             ImGui::EndMenu();
@@ -263,11 +567,27 @@ Runtime::RuntimeWindow* Runtime::registerWindow(RuntimeWindow window)
         ofLogWarning("ofxKit") << "Cannot register a window with no name.";
         return nullptr;
     }
+    if (window.id.empty())
+        window.id =
+            "ofxkit.window." + detail::makeImGuiIdFromLabel(window.name);
+
+    for (auto& existing : m_windows) {
+        if (existing.id == window.id) {
+            ofLogWarning("ofxKit") << "Window id '" << window.id << "' is already registered.";
+            return &existing;
+        }
+    }
 
     if (auto* existing = findWindow(window.name)) {
         ofLogWarning("ofxKit") << "Window '" << window.name << "' is already registered.";
         return existing;
     }
+
+    auto it = m_savedWindowVisibility.find(window.id);
+    if (it == m_savedWindowVisibility.end())
+        it = m_savedWindowVisibility.find(window.name);
+    if (it != m_savedWindowVisibility.end())
+        window.visible = it->second;
 
     m_windows.push_back(std::move(window));
     return &m_windows.back();
@@ -276,9 +596,8 @@ Runtime::RuntimeWindow* Runtime::registerWindow(RuntimeWindow window)
 Runtime::RuntimeWindow* Runtime::findWindow(const std::string& name)
 {
     for (auto& window : m_windows) {
-        if (window.name == name) {
+        if (window.name == name)
             return &window;
-        }
     }
     return nullptr;
 }
@@ -286,9 +605,8 @@ Runtime::RuntimeWindow* Runtime::findWindow(const std::string& name)
 const Runtime::RuntimeWindow* Runtime::findWindow(const std::string& name) const
 {
     for (const auto& window : m_windows) {
-        if (window.name == name) {
+        if (window.name == name)
             return &window;
-        }
     }
     return nullptr;
 }
@@ -302,16 +620,37 @@ bool Runtime::setWindowVisible(const std::string& name, bool visible)
     return false;
 }
 
-void Runtime::registerBuiltInWindows()
+void Runtime::addDefaultLayoutLeftDock(std::string imguiWindowTitle)
 {
-    if (m_builtInWindowsRegistered) return;
+    if (imguiWindowTitle.empty())
+        return;
+    for (const auto& existing : m_defaultLayoutExtraLeftDocks) {
+        if (existing == imguiWindowTitle)
+            return;
+    }
+    m_defaultLayoutExtraLeftDocks.push_back(std::move(imguiWindowTitle));
+}
 
-    registerWindow({"Toolbar",    "View", true,  false, [this](bool& visible) { drawToolbarWindow(visible);    }});
-    registerWindow({"Scene",      "View", true,  true,  [this](bool& visible) { drawSceneWindow(visible);      }});
-    registerWindow({"Properties", "View", true,  true,  [this](bool& visible) { drawPropertiesWindow(visible); }});
-    registerWindow({"Shortcuts",  "View", true,  true,  [this](bool& visible) { drawShortcutsWindow(visible);  }});
+void Runtime::addDefaultLayoutRightDock(std::string imguiWindowTitle)
+{
+    if (imguiWindowTitle.empty())
+        return;
+    for (const auto& existing : m_defaultLayoutExtraRightDocks) {
+        if (existing == imguiWindowTitle)
+            return;
+    }
+    m_defaultLayoutExtraRightDocks.push_back(std::move(imguiWindowTitle));
+}
 
-    m_builtInWindowsRegistered = true;
+void Runtime::addDefaultLayoutCenterDock(std::string imguiWindowTitle)
+{
+    if (imguiWindowTitle.empty())
+        return;
+    for (const auto& existing : m_defaultLayoutExtraCenterDocks) {
+        if (existing == imguiWindowTitle)
+            return;
+    }
+    m_defaultLayoutExtraCenterDocks.push_back(std::move(imguiWindowTitle));
 }
 
 void Runtime::addMenuBarGroup(const std::string& groupName, MenuBarCallback cb)
@@ -335,475 +674,43 @@ void Runtime::addMenuBarRawCallback(MenuBarCallback cb)
     m_menuBarRawCallbacks.push_back(std::move(cb));
 }
 
-void Runtime::drawSceneWindow(bool& visible)
+void Runtime::setImGuiIniPath(std::string path)
 {
-    auto& reg = registry();
-
-    ImGui::SetNextWindowPos(ImVec2(10, 40), ImGuiCond_Once);
-    ImGui::SetNextWindowSize(ImVec2(300, 500), ImGuiCond_Once);
-
-    if (ImGui::Begin("Scene", &visible)) {
-        ImGui::Text("Registry: %d entities",
-                    (int)reg.storage<entt::entity>().size());
-        ImGui::Separator();
-
-        for (entt::entity e : reg.storage<entt::entity>()) {
-            ImGui::PushID((int)e);
-            bool isSelected = (e == m_selected);
-            std::string label = "Entity " + ofToString((unsigned)e);
-            if (auto* node = reg.try_get<ecs::node_component>(e)) {
-                if (!node->getName().empty()) {
-                    label = node->getName();
-                }
-            }
-            if (ImGui::Selectable(label.c_str(), isSelected))
-                m_selected = e;
-            ImGui::PopID();
+    m_imguiIniPath = std::move(path);
+    if (ImGui::GetCurrentContext()) {
+        if (!m_imguiIniPath.empty())
+            detail::createParentDirectoryIfNeeded(m_imguiIniPath);
+        ImGui::GetIO().IniFilename =
+            m_imguiIniPath.empty() ? nullptr : m_imguiIniPath.c_str();
+        if (!m_imguiIniPath.empty()
+            && of::filesystem::exists(of::filesystem::path(m_imguiIniPath))) {
+            ImGui::LoadIniSettingsFromDisk(m_imguiIniPath.c_str());
         }
-
-        ImGui::Separator();
-
-        if (m_selected != entt::null && reg.valid(m_selected))
-            ImGui::Text("Selected: %u", (unsigned)m_selected);
     }
-    ImGui::End();
 }
 
-void Runtime::drawPropertiesWindow(bool& visible)
+void Runtime::setDataSubdir(const std::string& subdir)
 {
-    auto& reg = registry();
-
-    ImGui::SetNextWindowPos(ImVec2(320, 40), ImGuiCond_Once);
-    ImGui::SetNextWindowSize(ImVec2(360, 500), ImGuiCond_Once);
-
-    if (ImGui::Begin("Properties", &visible)) {
-        if (m_selected != entt::null && reg.valid(m_selected)) {
-            inspector::inspectEntity(reg, m_selected);
-        } else {
-            ImGui::TextDisabled("Select an entity in the Scene window.");
-        }
-    }
-    ImGui::End();
+    m_dataSubdir = subdir;
+    while (!m_dataSubdir.empty()
+           && (m_dataSubdir.front() == '/' || m_dataSubdir.front() == '\\'))
+        m_dataSubdir.erase(0, 1);
+    while (!m_dataSubdir.empty()
+           && (m_dataSubdir.back() == '/' || m_dataSubdir.back() == '\\'))
+        m_dataSubdir.pop_back();
 }
 
-void Runtime::drawShortcutsWindow(bool& visible)
+std::string Runtime::dataPath(const std::string& filename) const
 {
-    ImGui::SetNextWindowPos(ImVec2(10, 550), ImGuiCond_Once);
-    ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Once);
-
-    if (ImGui::Begin("Shortcuts", &visible)) {
-        ImGui::TextWrapped(
-            "Named shortcuts can be remapped below; changes are saved to %s",
-            ShortcutManager::defaultBindingsPath().c_str());
-        ImGui::Spacing();
-
-        if (ImGui::BeginTable("shortcut_rows", 3, ImGuiTableFlags_BordersInnerV)) {
-            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Binding", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 90.f);
-            ImGui::TableHeadersRow();
-
-            for (const auto& s : m_shortcuts.all()) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(s.description.c_str());
-                ImGui::TableSetColumnIndex(1);
-                const bool capturing =
-                    m_shortcuts.isCapturing() && m_shortcuts.captureActionId() == s.actionId;
-                if (capturing) {
-                    ImGui::TextColored(ImVec4(1.f, 0.85f, 0.2f, 1.f),
-                                       "Press new shortcut... (Esc cancel)");
-                } else {
-                    ImGui::TextUnformatted(
-                        ShortcutManager::formatBindingLabel(s.key, s.modifiers).c_str());
-                }
-                ImGui::TableSetColumnIndex(2);
-                if (!s.actionId.empty()) {
-                    ImGui::PushID(s.actionId.c_str());
-                    if (capturing) {
-                        if (ImGui::Button("Cancel")) {
-                            m_shortcuts.cancelCapture();
-                        }
-                    } else if (ImGui::Button("Change...")) {
-                        m_shortcuts.beginCapture(s.actionId);
-                    }
-                    ImGui::PopID();
-                } else {
-                    ImGui::TextDisabled("—");
-                }
-            }
-            ImGui::EndTable();
-        }
-
-        if (!m_shortcuts.lastCaptureError().empty()) {
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.f, 0.35f, 0.35f, 1.f), "%s",
-                               m_shortcuts.lastCaptureError().c_str());
-        }
-
-        ImGui::Spacing();
-        if (ImGui::Button("Save bindings now")) {
-            m_shortcuts.saveBindingsToFile(ShortcutManager::defaultBindingsPath());
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Reload from disk")) {
-            m_shortcuts.loadBindingsFromFile(ShortcutManager::defaultBindingsPath());
-        }
-    }
-    ImGui::End();
-}
-
-// ============================================================================
-// Toolbar
-// ============================================================================
-
-void Runtime::registerToolbarItem(ToolbarItem item)
-{
-    if (item.id.empty()) {
-        ofLogWarning("ofxKit") << "Cannot register a toolbar item with no id.";
-        return;
-    }
-    for (const auto& existing : m_toolbarItems) {
-        if (existing.id == item.id) {
-            ofLogWarning("ofxKit") << "Toolbar item '" << item.id << "' is already registered.";
-            return;
-        }
-    }
-    m_toolbarItems.push_back(std::move(item));
-}
-
-bool Runtime::unregisterToolbarItem(const std::string& id)
-{
-    auto it = std::find_if(m_toolbarItems.begin(), m_toolbarItems.end(),
-                           [&](const ToolbarItem& t) { return t.id == id; });
-    if (it == m_toolbarItems.end()) return false;
-    m_toolbarItems.erase(it);
-    return true;
-}
-
-void Runtime::drawToolbarWindow(bool& visible)
-{
-    if (m_toolbarItems.empty()) return;
-
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 10, vp->WorkPos.y + 50), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always); // auto-size
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse
-                           | ImGuiWindowFlags_AlwaysAutoResize
-                           | ImGuiWindowFlags_NoScrollbar
-                           | ImGuiWindowFlags_NoTitleBar;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(5, 5));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(2, 2));
-
-    if (ImGui::Begin("Toolbar", &visible, flags)) {
-        const ImVec2 btnSize(32, 32);
-        const ImVec2 framePad(4, 4);
-        const ImVec4 activeCol(0.2f, 0.6f, 0.9f, 1.0f);
-
-        std::string prevGroup = "\x01"; // sentinel — not a valid group string
-
-        for (const auto& item : m_toolbarItems) {
-            // Separator between groups (only when both sides are named groups)
-            if (!item.group.empty() && item.group != prevGroup && prevGroup != "\x01") {
-                ImGui::Separator();
-            }
-            prevGroup = item.group;
-
-            bool active = item.isActive && item.isActive();
-            if (active) ImGui::PushStyleColor(ImGuiCol_Button, activeCol);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, framePad);
-
-            const char* label = (item.icon && item.icon[0] != '\0') ? item.icon : item.id.c_str();
-            ImGui::PushID(item.id.c_str());
-            bool clicked = ImGui::Button(label, btnSize);
-            ImGui::PopID();
-
-            ImGui::PopStyleVar();
-            if (active) ImGui::PopStyleColor();
-
-            if (!item.tooltip.empty() && ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", item.tooltip.c_str());
-            }
-
-            if (clicked && item.onSelect) {
-                item.onSelect();
-            }
-        }
-    }
-    ImGui::PopStyleVar(2);
-    ImGui::End();
+    if (m_dataSubdir.empty())
+        return ofToDataPath(filename, true);
+    return ofToDataPath(m_dataSubdir + "/" + filename, true);
 }
 
 void Runtime::setAppName(std::string name)
 {
-    if (!name.empty()) {
+    if (!name.empty())
         m_appName = std::move(name);
-    }
-}
-
-void Runtime::setImGuiIniPath(std::string path)
-{
-    m_imguiIniPath = std::move(path);
-    // If ImGui is already initialised, apply immediately. Otherwise onSetup
-    // will pick this up after m_gui.setup() runs.
-    if (ImGui::GetCurrentContext()) {
-        ImGui::GetIO().IniFilename = m_imguiIniPath.empty()
-            ? nullptr
-            : m_imguiIniPath.c_str();
-    }
-}
-
-// ============================================================================
-// UI scale
-// ============================================================================
-
-float Runtime::detectUIScale()
-{
-#ifdef OFXKIT_HAS_GLFW
-    if (GLFWmonitor* monitor = glfwGetPrimaryMonitor()) {
-        float xs = 1.f, ys = 1.f;
-        glfwGetMonitorContentScale(monitor, &xs, &ys);
-        // X and Y content scale are normally identical; pick the larger
-        // to be safe so widgets are never undersized on mixed-DPI rigs.
-        float scale = std::max(xs, ys);
-        if (scale > 0.1f && scale < 8.f) return scale;
-    }
-#endif
-    return 1.0f;
-}
-
-void Runtime::setUIScale(float scale)
-{
-    // Clamp to a sane range so a corrupt prefs file can't wedge the UI.
-    scale = std::clamp(scale, 0.5f, 4.0f);
-    m_uiScale    = scale;
-    m_uiScaleSet = true;
-    if (m_baseStyleCaptured) applyUIScale();
-    saveUIScalePref();
-}
-
-void Runtime::applyUIScale()
-{
-    if (!ImGui::GetCurrentContext() || !m_baseStyleCaptured) return;
-    ImGuiStyle& style = ImGui::GetStyle();
-    style = m_baseStyle;             // restore unscaled baseline
-    style.ScaleAllSizes(m_uiScale);  // then scale once
-    ImGui::GetIO().FontGlobalScale = m_uiScale;
-}
-
-void Runtime::loadUIScalePref()
-{
-    std::string path = ofToDataPath("ofxKit/uiScale.json", true);
-    if (!of::filesystem::exists(of::filesystem::path(path))) return;
-    try {
-        std::ifstream in(path);
-        ofJson j; in >> j;
-        if (j.contains("uiScale")) {
-            m_uiScale    = std::clamp(j["uiScale"].get<float>(), 0.5f, 4.0f);
-            m_uiScaleSet = true;
-        }
-    } catch (...) { /* corrupt file — fall through to auto-detect */ }
-}
-
-void Runtime::saveUIScalePref()
-{
-    std::string path = ofToDataPath("ofxKit/uiScale.json", true);
-    try {
-        of::filesystem::create_directories(of::filesystem::path(path).parent_path());
-        ofJson j; j["uiScale"] = m_uiScale;
-        std::ofstream out(path);
-        out << j.dump(2);
-    } catch (...) { /* don't crash the app on a save failure */ }
-}
-
-// ============================================================================
-// Theme
-// ============================================================================
-
-namespace {
-
-/// Doug Binks' enhanced theme (https://gist.github.com/dougbinks/8089b4bbaccaaf6fa204236978d165a9).
-/// Originally a refined version of itamago's light style; the dark variant is
-/// produced by inverting the value channel of low-saturation colours.
-/// Ported to modern ImGui colour enums (ImGuiCol_ChildWindowBg, ImGuiCol_Column*,
-/// ImGuiCol_CloseButton*, ImGuiCol_ComboBg, ImGuiCol_ModalWindowDarkening have
-/// all been renamed or removed since the gist was written).
-void applyEnhancedTheme(bool darkVariant, float alpha)
-{
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.Alpha         = 1.0f;
-    style.FrameRounding = 3.0f;
-
-    auto& C = style.Colors;
-    C[ImGuiCol_Text]                  = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
-    C[ImGuiCol_TextDisabled]          = ImVec4(0.60f, 0.60f, 0.60f, 1.00f);
-    C[ImGuiCol_WindowBg]              = ImVec4(0.94f, 0.94f, 0.94f, 0.94f);
-    C[ImGuiCol_ChildBg]               = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    C[ImGuiCol_PopupBg]               = ImVec4(1.00f, 1.00f, 1.00f, 0.94f);
-    C[ImGuiCol_Border]                = ImVec4(0.00f, 0.00f, 0.00f, 0.39f);
-    C[ImGuiCol_BorderShadow]          = ImVec4(1.00f, 1.00f, 1.00f, 0.10f);
-    C[ImGuiCol_FrameBg]               = ImVec4(1.00f, 1.00f, 1.00f, 0.94f);
-    C[ImGuiCol_FrameBgHovered]        = ImVec4(0.26f, 0.59f, 0.98f, 0.40f);
-    C[ImGuiCol_FrameBgActive]         = ImVec4(0.26f, 0.59f, 0.98f, 0.67f);
-    C[ImGuiCol_TitleBg]               = ImVec4(0.96f, 0.96f, 0.96f, 1.00f);
-    C[ImGuiCol_TitleBgCollapsed]      = ImVec4(1.00f, 1.00f, 1.00f, 0.51f);
-    C[ImGuiCol_TitleBgActive]         = ImVec4(0.82f, 0.82f, 0.82f, 1.00f);
-    C[ImGuiCol_MenuBarBg]             = ImVec4(0.86f, 0.86f, 0.86f, 1.00f);
-    C[ImGuiCol_ScrollbarBg]           = ImVec4(0.98f, 0.98f, 0.98f, 0.53f);
-    C[ImGuiCol_ScrollbarGrab]         = ImVec4(0.69f, 0.69f, 0.69f, 1.00f);
-    C[ImGuiCol_ScrollbarGrabHovered]  = ImVec4(0.59f, 0.59f, 0.59f, 1.00f);
-    C[ImGuiCol_ScrollbarGrabActive]   = ImVec4(0.49f, 0.49f, 0.49f, 1.00f);
-    C[ImGuiCol_CheckMark]             = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-    C[ImGuiCol_SliderGrab]            = ImVec4(0.24f, 0.52f, 0.88f, 1.00f);
-    C[ImGuiCol_SliderGrabActive]      = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-    C[ImGuiCol_Button]                = ImVec4(0.26f, 0.59f, 0.98f, 0.40f);
-    C[ImGuiCol_ButtonHovered]         = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-    C[ImGuiCol_ButtonActive]          = ImVec4(0.06f, 0.53f, 0.98f, 1.00f);
-    C[ImGuiCol_Header]                = ImVec4(0.26f, 0.59f, 0.98f, 0.31f);
-    C[ImGuiCol_HeaderHovered]         = ImVec4(0.26f, 0.59f, 0.98f, 0.80f);
-    C[ImGuiCol_HeaderActive]          = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-    C[ImGuiCol_Separator]             = ImVec4(0.39f, 0.39f, 0.39f, 1.00f);
-    C[ImGuiCol_SeparatorHovered]      = ImVec4(0.26f, 0.59f, 0.98f, 0.78f);
-    C[ImGuiCol_SeparatorActive]       = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
-    C[ImGuiCol_ResizeGrip]            = ImVec4(1.00f, 1.00f, 1.00f, 0.50f);
-    C[ImGuiCol_ResizeGripHovered]     = ImVec4(0.26f, 0.59f, 0.98f, 0.67f);
-    C[ImGuiCol_ResizeGripActive]      = ImVec4(0.26f, 0.59f, 0.98f, 0.95f);
-    C[ImGuiCol_Tab]                   = ImVec4(0.76f, 0.80f, 0.84f, 0.93f);
-    C[ImGuiCol_TabHovered]            = ImVec4(0.26f, 0.59f, 0.98f, 0.80f);
-    C[ImGuiCol_TabActive]             = ImVec4(0.60f, 0.73f, 0.88f, 1.00f);
-    C[ImGuiCol_TabUnfocused]          = ImVec4(0.92f, 0.93f, 0.94f, 0.99f);
-    C[ImGuiCol_TabUnfocusedActive]    = ImVec4(0.74f, 0.82f, 0.91f, 1.00f);
-    C[ImGuiCol_PlotLines]             = ImVec4(0.39f, 0.39f, 0.39f, 1.00f);
-    C[ImGuiCol_PlotLinesHovered]      = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
-    C[ImGuiCol_PlotHistogram]         = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
-    C[ImGuiCol_PlotHistogramHovered]  = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
-    C[ImGuiCol_TextSelectedBg]        = ImVec4(0.26f, 0.59f, 0.98f, 0.35f);
-    C[ImGuiCol_ModalWindowDimBg]      = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
-    C[ImGuiCol_DockingPreview]        = ImVec4(0.26f, 0.59f, 0.98f, 0.70f);
-    C[ImGuiCol_DockingEmptyBg]        = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
-
-    if (darkVariant) {
-        // Invert the value channel of low-saturation colours to get a dark palette,
-        // and modulate alpha by `alpha`. Saturated accent hues are preserved.
-        for (int i = 0; i < ImGuiCol_COUNT; ++i) {
-            ImVec4& col = C[i];
-            float h = 0.f, s = 0.f, v = 0.f;
-            ImGui::ColorConvertRGBtoHSV(col.x, col.y, col.z, h, s, v);
-            if (s < 0.1f) {
-                v = 1.0f - v;
-                ImGui::ColorConvertHSVtoRGB(h, s, v, col.x, col.y, col.z);
-            }
-            if (col.w < 1.00f) col.w *= alpha;
-        }
-    } else {
-        // Light variant: just modulate alpha for translucent colours.
-        for (int i = 0; i < ImGuiCol_COUNT; ++i) {
-            ImVec4& col = C[i];
-            if (col.w < 1.00f) {
-                col.x *= alpha; col.y *= alpha; col.z *= alpha; col.w *= alpha;
-            }
-        }
-    }
-}
-
-} // namespace
-
-void Runtime::setTheme(Theme theme)
-{
-    m_theme    = theme;
-    m_themeSet = true;
-    if (!ImGui::GetCurrentContext()) {
-        // Setup hasn't run yet — applyTheme() / scale will run from onSetup.
-        saveThemePref();
-        return;
-    }
-    applyTheme();
-    // Re-capture the new theme's base style and reapply the active scale on
-    // top so widgets keep their HiDPI sizes after a theme change.
-    m_baseStyle = ImGui::GetStyle();
-    applyUIScale();
-    saveThemePref();
-}
-
-void Runtime::applyTheme()
-{
-    if (!ImGui::GetCurrentContext()) return;
-    switch (m_theme) {
-        case Theme::EnhancedDark:  applyEnhancedTheme(true,  1.0f); break;
-        case Theme::EnhancedLight: applyEnhancedTheme(false, 1.0f); break;
-        case Theme::Dark:          ImGui::StyleColorsDark();        break;
-        case Theme::Light:         ImGui::StyleColorsLight();       break;
-        case Theme::Classic:       ImGui::StyleColorsClassic();     break;
-    }
-}
-
-void Runtime::loadThemePref()
-{
-    std::string path = ofToDataPath("ofxKit/theme.json", true);
-    if (!of::filesystem::exists(of::filesystem::path(path))) return;
-    try {
-        std::ifstream in(path);
-        ofJson j; in >> j;
-        if (j.contains("theme")) {
-            std::string s = j["theme"].get<std::string>();
-            if      (s == "enhanced_dark")  m_theme = Theme::EnhancedDark;
-            else if (s == "enhanced_light") m_theme = Theme::EnhancedLight;
-            else if (s == "dark")           m_theme = Theme::Dark;
-            else if (s == "light")          m_theme = Theme::Light;
-            else if (s == "classic")        m_theme = Theme::Classic;
-            m_themeSet = true;
-        }
-    } catch (...) { /* corrupt file — fall through to default EnhancedDark */ }
-}
-
-void Runtime::saveThemePref()
-{
-    std::string path = ofToDataPath("ofxKit/theme.json", true);
-    try {
-        of::filesystem::create_directories(of::filesystem::path(path).parent_path());
-        const char* s = "enhanced_dark";
-        switch (m_theme) {
-            case Theme::EnhancedDark:  s = "enhanced_dark";  break;
-            case Theme::EnhancedLight: s = "enhanced_light"; break;
-            case Theme::Dark:          s = "dark";           break;
-            case Theme::Light:         s = "light";          break;
-            case Theme::Classic:       s = "classic";        break;
-        }
-        ofJson j; j["theme"] = s;
-        std::ofstream out(path);
-        out << j.dump(2);
-    } catch (...) { /* don't crash the app on a save failure */ }
-}
-
-void Runtime::ensureAppName()
-{
-    if (!m_appName.empty()) return;
-
-    std::string name = ofPathToString(of::filesystem::path(ofFilePath::getAppName()).stem());
-    if (name.empty()) {
-        m_appName = "ofKitty";
-        return;
-    }
-
-    std::replace(name.begin(), name.end(), '_', ' ');
-    std::replace(name.begin(), name.end(), '-', ' ');
-
-    bool capitalizeNext = true;
-    for (char& c : name) {
-        unsigned char uc = static_cast<unsigned char>(c);
-        if (std::isspace(uc)) {
-            capitalizeNext = true;
-            continue;
-        }
-        c = capitalizeNext
-            ? static_cast<char>(std::toupper(uc))
-            : static_cast<char>(std::tolower(uc));
-        capitalizeNext = false;
-    }
-
-    m_appName = name;
 }
 
 } // namespace ofkitty

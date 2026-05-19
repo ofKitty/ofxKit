@@ -1,6 +1,6 @@
 # Toolbar
 
-The **Toolbar** is a compact floating ImGui panel that is always visible (not restricted to Edit mode). It shows a vertical stack of 32×32 icon buttons — one per registered `ToolbarItem`. Addons and sketches register items to give the user a tool-picker without building their own window.
+The **Toolbar** is a compact floating ImGui panel (visible in Edit mode). It shows a vertical stack of square icon buttons — one per registered `ToolbarItem`. Button size tracks the active font / UI scale via `ImFonts::ToolbarIconButton` so Font Awesome glyphs stay centred. Addons and sketches register items to give the user a tool-picker without building their own window.
 
 The Toolbar window is hidden automatically when there are no items registered, so it costs nothing if unused.
 
@@ -55,24 +55,15 @@ Items with no group and items in different groups are separated as follows:
 
 ## Using Font Awesome icons
 
-ofxKit doesn't load a Font Awesome font itself — that's left to the host app so it can choose atlas size, glyph ranges, and scale. Load the font in a `addPostSetupHook` callback:
+`Runtime::attach` loads Input Sans + Font Awesome 5 Solid via `ImFonts::LoadDefaultFonts` (from **ofxImGuiStyle**). Toolbar buttons use `ImFonts::ToolbarIconButton`; include `IconsFontAwesome5.h` when registering items:
 
 ```cpp
-#include "IconsFontAwesome5.h"  // from ofxImGui or your own copy
-
-runtime().addPostSetupHook([](ofxImGui::Gui& gui) {
-    ImGuiIO& io = ImGui::GetIO();
-    io.Fonts->AddFontFromFileTTF("fonts/Roboto-Medium.ttf", 14.0f);
-
-    static const ImWchar faRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
-    ImFontConfig cfg;
-    cfg.MergeMode = true;
-    cfg.GlyphMinAdvanceX = 14.0f;
-    io.Fonts->AddFontFromFileTTF("fonts/" FONT_ICON_FILE_NAME_FAS, 14.0f, &cfg, faRanges);
-});
+#include <ofxImGuiStyle/src/IconsFontAwesome5.h>
 ```
 
-If no icon font is loaded, pass a short ASCII string (e.g. `"Sel"`, `"Pen"`) as the `icon` field — the button will still work, just without vector glyphs.
+The same gizmo tools are available from **Edit →** (Translate, Rotate, …) and keyboard shortcuts **W / E / R / X** — you do not need the Toolbar window for gizmo mode.
+
+If you replace the default font setup, pass a short ASCII string (e.g. `"Sel"`) as the `icon` field — the button still works without vector glyphs.
 
 ## Removing an item at runtime
 

@@ -4,7 +4,7 @@
 
 ## Named actions (persistent, remappable)
 
-Named actions are saved to `bin/data/ofxKit/shortcuts.json` and can be remapped by the user in the **Shortcuts** window (Edit mode).
+Named actions are saved to `bin/data/shortcuts.json` (or `bin/data/<Runtime::dataSubdir()>/shortcuts.json` if a subdir is configured) and can be remapped by the user in the **Shortcuts** window (Edit mode).
 
 ```cpp
 ofkitty::runtime().keys().registerAction(
@@ -53,7 +53,7 @@ Removes all bindings (named or anonymous) that match the key + modifier combo.
 
 ## Loading / saving JSON bindings
 
-Bindings load automatically from `bin/data/ofxKit/shortcuts.json` at startup and save automatically whenever a named action is remapped via the UI.
+Bindings load automatically from the default path (see above) at startup and save automatically whenever a named action is remapped via the UI.
 
 ```cpp
 // Manual reload (e.g. after the user edits the file externally)
