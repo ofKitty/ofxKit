@@ -5,6 +5,7 @@
 #include <ofxEnTTKit/src/ofxEnTTKit.h>
 #include <ofxEnTTInspector/src/ofxEnTTInspector.h>
 #include <ofxImGuiStyle/src/IconsFontAwesome5.h>
+#include <ofxImGuiStyle/src/ImFonts.h>
 
 #include <imgui.h>
 
@@ -109,7 +110,7 @@ void Runtime::drawToolbarWindow(bool& visible)
 
     if (ImGui::Begin("Toolbar###ofxkit.window.toolbar", &visible, flags)) {
 
-        ImGui::TextDisabled(ICON_FA_GRIP_VERTICAL);
+        ImFonts::ToolbarIconButton(ICON_FA_GRIP_VERTICAL, "##drag", true);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Drag to move toolbar");
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
@@ -120,19 +121,16 @@ void Runtime::drawToolbarWindow(bool& visible)
 
         ImGui::SameLine();
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.2f, 0.2f, 0.7f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.9f, 0.1f, 0.1f, 1.0f));
-        if (ImGui::SmallButton(ICON_FA_TIMES))
+        if (ImFonts::ToolbarIconButton(ICON_FA_TIMES, "##close", true))
             visible = false;
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Close Toolbar");
-        ImGui::PopStyleColor(3);
+        ImGui::PopStyleColor(2);
 
         ImGui::Separator();
 
-        const ImVec2 btnSize(32, 32);
-        const ImVec2 framePad(4, 4);
         const ImVec4 activeCol(0.2f, 0.6f, 0.9f, 1.0f);
 
         std::string prevGroup = "\x01";
@@ -145,15 +143,17 @@ void Runtime::drawToolbarWindow(bool& visible)
             bool active = item.isActive && item.isActive();
             if (active)
                 ImGui::PushStyleColor(ImGuiCol_Button, activeCol);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, framePad);
 
-            const char* label =
-                (item.icon && item.icon[0] != '\0') ? item.icon : item.id.c_str();
             ImGui::PushID(item.id.c_str());
-            bool clicked = ImGui::Button(label, btnSize);
+            bool clicked = false;
+            if (item.icon && item.icon[0] != '\0') {
+                clicked = ImFonts::ToolbarIconButton(item.icon, "##tool");
+            } else {
+                const float side = ImGui::GetFontSize() + 8.f;
+                clicked = ImGui::Button(item.id.c_str(), ImVec2(side, side));
+            }
             ImGui::PopID();
 
-            ImGui::PopStyleVar();
             if (active)
                 ImGui::PopStyleColor();
 

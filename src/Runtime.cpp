@@ -402,6 +402,36 @@ void Runtime::drawOverlay()
     }
 }
 
+void Runtime::renderGizmoMenu()
+{
+    if (!ImGui::BeginMenu("Edit"))
+        return;
+
+    if (ImGui::MenuItem("Translate", "W", m_gizmoOp == GizmoOperation::Translate))
+        m_gizmoOp = GizmoOperation::Translate;
+    if (ImGui::MenuItem("Rotate", "E", m_gizmoOp == GizmoOperation::Rotate))
+        m_gizmoOp = GizmoOperation::Rotate;
+    if (ImGui::MenuItem("Scale", "R", m_gizmoOp == GizmoOperation::Scale))
+        m_gizmoOp = GizmoOperation::Scale;
+    if (ImGui::MenuItem("Universal", nullptr, m_gizmoOp == GizmoOperation::Universal))
+        m_gizmoOp = GizmoOperation::Universal;
+
+    ImGui::Separator();
+
+    if (ImGui::MenuItem("World Space", nullptr, m_gizmoMode == GizmoMode::World))
+        m_gizmoMode = GizmoMode::World;
+    if (ImGui::MenuItem("Local Space", nullptr, m_gizmoMode == GizmoMode::Local))
+        m_gizmoMode = GizmoMode::Local;
+
+    ImGui::Separator();
+
+    if (ImGui::MenuItem("Toggle World / Local", "X"))
+        m_gizmoMode = (m_gizmoMode == GizmoMode::World) ? GizmoMode::Local
+                                                          : GizmoMode::World;
+
+    ImGui::EndMenu();
+}
+
 void Runtime::renderMainMenuBar()
 {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5, 8));
@@ -496,6 +526,9 @@ void Runtime::renderMainMenuBar()
             m_menuBarRawCallbacks[i]();
             ImGui::PopID();
         }
+
+        if (m_editMode)
+            renderGizmoMenu();
 
         if (ImGui::BeginMenu("View")) {
             for (auto& window : m_windows) {

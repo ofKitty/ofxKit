@@ -81,7 +81,9 @@ void ofApp::draw()
 
 The gizmo is then rendered on the ImGui foreground draw list, clipped to the work area (below menu bar, above status bar).
 
-### Keyboard shortcuts
+### Menu and keyboard shortcuts
+
+In Edit mode, use **Edit →** (Translate, Rotate, Scale, Universal, World / Local) or:
 
 | Key | Action                          |
 |-----|---------------------------------|
@@ -89,6 +91,8 @@ The gizmo is then rendered on the ImGui foreground draw list, clipped to the wor
 | E   | Rotate                          |
 | R   | Scale                           |
 | X   | Toggle World / Local space      |
+
+The optional **Toolbar** built-in shows the same operations as icon buttons.
 
 ### API
 

@@ -100,7 +100,7 @@ Built-ins are implemented on top of the same registration pipeline (internally t
 
 | Name | Stable ID | editModeOnly | Description |
 |---|---|---|---|
-| `Toolbar` | `ofxkit.window.toolbar` | false | Floating tool-picker panel (see [toolbar.md](toolbar.md)) |
+| `Toolbar` | `ofxkit.window.toolbar` | true | Floating tool-picker panel (see [toolbar.md](toolbar.md)); enabling it also registers built-in gizmo toolbar items |
 | `Scene` | `ofxkit.window.scene` | true | Entity list for the attached EnTT registry |
 | `Properties` | `ofxkit.window.properties` | true | Component inspector for the selected entity |
 | `Shortcuts` | `ofxkit.window.shortcuts` | true | Editable keyboard shortcut list |

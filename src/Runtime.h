@@ -439,8 +439,9 @@ public:
     void setUIScale(float scale);
     float uiScale() const { return m_uiScale; }
 
-    /// Auto-detect the OS UI scale factor for the primary monitor. Returns
-    /// 1.0 if detection fails (non-GLFW backend, headless, etc.).
+    /// Auto-detect the OS UI scale factor for the primary monitor (delegates
+    /// to `ImTheme::DetectOsScale()`). Returns 1.0 if detection fails
+    /// (non-GLFW backend, headless, etc.).
     static float detectUIScale();
 
     // -------------------------------------------------------------------------
@@ -814,6 +815,7 @@ private:
 
     void drawOverlay();
     void renderMainMenuBar();
+    void renderGizmoMenu();
     void drawSceneWindow(bool& visible);
     void drawPropertiesWindow(bool& visible);
     void drawShortcutsWindow(bool& visible);

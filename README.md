@@ -317,6 +317,8 @@ In the ofKitty distribution, install/update these dependencies with:
 | R      | Gizmo: Scale (while in Edit mode)     |
 | X      | Gizmo: Toggle World / Local space     |
 
+Gizmo modes are also under **Edit** in the menu bar (Edit mode only). Enabling the **Toolbar** built-in adds the same tools as icon buttons plus **View → Toolbar** to show or hide the panel.
+
 
 ---
 
