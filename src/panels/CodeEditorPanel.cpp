@@ -53,6 +53,43 @@ void CodeEditorPanel::setLanguage(TextEditor::LanguageDefinitionId lang)
     m_editor.SetLanguageDefinition(lang);
 }
 
+void CodeEditorPanel::setSidebarEntries(std::vector<SidebarEntry> entries)
+{
+    m_sidebarEntries = std::move(entries);
+    m_sidebarSelected = -1;
+}
+
+int CodeEditorPanel::getLineCount() const
+{
+    return std::max(1, m_editor.GetLineCount());
+}
+
+int CodeEditorPanel::getCursorLine() const
+{
+    int line = 0, col = 0;
+    m_editor.GetCursorPosition(line, col);
+    return line;
+}
+
+void CodeEditorPanel::setCursorLine(int line)
+{
+    line = std::clamp(line, 0, getLineCount() - 1);
+    m_editor.SetCursorPosition(line, 0);
+}
+
+void CodeEditorPanel::setHighlightLine(int line)
+{
+    m_highlightLine = line;
+    if (line < 0) {
+        m_editor.ClearSelections();
+        return;
+    }
+    line = std::clamp(line, 0, getLineCount() - 1);
+    m_editor.ClearSelections();
+    m_editor.SetCursorPosition(line, 0);
+    m_editor.SetViewAtLine(line, TextEditor::SetViewAtLineMode::Centered);
+}
+
 void CodeEditorPanel::draw(bool& visible)
 {
     ImGui::SetNextWindowSize(ImVec2(820, 580), ImGuiCond_FirstUseEver);
@@ -623,10 +660,45 @@ void CodeEditorPanel::draw(bool& visible)
     ImGui::Separator();
 
     const float statusH = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
-    ImVec2      editorSize = ImGui::GetContentRegionAvail();
+    const float sidebarW = m_sidebarEntries.empty() ? 0.f : 180.f;
+
+    if (sidebarW > 0.f) {
+        ImGui::BeginChild("##code_sidebar", ImVec2(sidebarW, -statusH), ImGuiChildFlags_Borders);
+        for (int i = 0; i < (int)m_sidebarEntries.size(); ++i) {
+            const auto& e = m_sidebarEntries[i];
+            const bool active = e.isActive || m_sidebarSelected == i;
+            if (ImGui::Selectable(e.label.c_str(), active, ImGuiSelectableFlags_AllowOverlap)) {
+                m_sidebarSelected = i;
+                if (!e.path.empty()) {
+                    std::ifstream ifs(e.path);
+                    if (ifs) {
+                        m_filePath = e.path;
+                        m_editor.SetText(std::string(
+                            std::istreambuf_iterator<char>(ifs),
+                            std::istreambuf_iterator<char>()));
+                        m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Gcode);
+                    }
+                }
+            }
+            if (!e.path.empty() && ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", e.path.c_str());
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+    }
+
+    ImVec2 editorSize = ImGui::GetContentRegionAvail();
     editorSize.y -= statusH;
 
     m_editor.Render("##code", ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows), editorSize);
+
+    if (m_syncPlaybackFromCursor && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
+        const int curLine = getCursorLine();
+        if (curLine != m_lastReportedCursorLine) {
+            m_lastReportedCursorLine = curLine;
+            if (m_onCursorLineChanged) m_onCursorLineChanged(curLine);
+        }
+    }
 
     ImGui::Separator();
     int curLine = 0, curCol = 0;

@@ -25,7 +25,6 @@
     "ofxkit.window.properties": true,
     "ofxkit.window.scene": true,
     "ofxkit.window.scene_view": true,
-    "ofxkit.window.scene_view_2": true,
     "ofxkit.window.shortcuts": false,
     "ofxkit.window.toolbar": true
   }

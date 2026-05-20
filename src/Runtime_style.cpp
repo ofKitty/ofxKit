@@ -38,7 +38,7 @@ void Runtime::applyUIScale()
 {
     if (!ImGui::GetCurrentContext())
         return;
-    ImTheme::ApplyScale(m_uiScale);
+    ImTheme::SetUIScale(m_uiScale);
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowMinSize = ImVec2(160.f * m_uiScale, 50.f * m_uiScale);
 }
@@ -79,9 +79,8 @@ void Runtime::setTheme(const std::string& id)
         saveThemePref();
         return;
     }
-    ImGui::GetStyle() = ImGuiStyle{};
+    ImTheme::SetUIScale(m_uiScale);
     applyTheme();
-    ImTheme::CaptureBaseStyle();
     applyUIScale();
     saveThemePref();
 }
@@ -94,7 +93,7 @@ void Runtime::applyTheme()
         ofLogWarning("ofxKit") << "Theme '" << m_themeId
                                << "' not registered - falling back to '"
                                << kDefaultThemeId << "'.";
-        ImTheme::ApplyTheme(ImTheme::Theme_DarculaDarker);
+        ImTheme::Setup(ImTheme::Theme_DarculaDarker, m_uiScale);
         m_themeId = kDefaultThemeId;
     }
 }

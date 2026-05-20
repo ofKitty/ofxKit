@@ -320,7 +320,19 @@ void Runtime::drawPropertiesWindow(bool& visible)
     ImGui::SetNextWindowSize(ImVec2(360, 500), ImGuiCond_Once);
 
     if (ImGui::Begin("Properties###ofxkit.window.properties", &visible)) {
-        if (m_selected != entt::null && reg.valid(m_selected)) {
+        const bool hasEntity =
+            m_selected != entt::null && reg.valid(m_selected);
+
+        if (m_propertiesSupplement) {
+            m_propertiesSupplement();
+            if (hasEntity) {
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+            }
+        }
+
+        if (hasEntity) {
             inspector::inspectEntity(reg, m_selected);
 
             ImGui::Spacing();
@@ -360,7 +372,7 @@ void Runtime::drawPropertiesWindow(bool& visible)
                 }
                 ImGui::EndPopup();
             }
-        } else {
+        } else if (!m_propertiesSupplement) {
             ImGui::TextDisabled("Select an entity in the Scene window.");
         }
     }

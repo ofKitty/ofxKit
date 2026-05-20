@@ -161,7 +161,6 @@ void Runtime::drawPrefsAppearance()
 
     if (ImGui::Button("Randomise Accent \xef\x95\xa2")) {
         ImTheme::ApplyRandomAccent();
-        ImTheme::CaptureBaseStyle();
         applyUIScale();
     }
     if (ImGui::IsItemHovered())
@@ -200,7 +199,7 @@ void Runtime::drawPrefsAppearance()
                        [this](const std::string& path) {
                            if (ImTheme::LoadStyle(path.c_str())) {
                                ImTheme::ApplyCompactMetrics();
-                               ImTheme::CaptureBaseStyle();
+                               ImTheme::Commit();
                                applyUIScale();
                            }
                        });

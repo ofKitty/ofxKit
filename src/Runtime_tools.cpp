@@ -78,6 +78,16 @@ bool Runtime::isSceneHovered() const
     return m_sceneViewport.isHovered() && !isGizmoActive();
 }
 
+void Runtime::setPropertiesSupplement(std::function<void()> draw)
+{
+    m_propertiesSupplement = std::move(draw);
+}
+
+void Runtime::clearPropertiesSupplement()
+{
+    m_propertiesSupplement = nullptr;
+}
+
 void Runtime::drawGizmoOverlay()
 {
     if (!m_sceneCamera)
@@ -198,6 +208,43 @@ void Runtime::codeEditorSetLanguage(TextEditor::LanguageDefinitionId lang)
 {
     if (m_codeEditor)
         m_codeEditor->setLanguage(lang);
+}
+
+void Runtime::codeEditorSetSidebarEntries(
+    std::vector<CodeEditorPanel::SidebarEntry> entries)
+{
+    if (m_codeEditor)
+        m_codeEditor->setSidebarEntries(std::move(entries));
+}
+
+void Runtime::codeEditorSetHighlightLine(int line)
+{
+    if (m_codeEditor) m_codeEditor->setHighlightLine(line);
+}
+
+void Runtime::codeEditorSetCursorLine(int line)
+{
+    if (m_codeEditor) m_codeEditor->setCursorLine(line);
+}
+
+int Runtime::codeEditorGetCursorLine() const
+{
+    return m_codeEditor ? m_codeEditor->getCursorLine() : 0;
+}
+
+int Runtime::codeEditorGetLineCount() const
+{
+    return m_codeEditor ? m_codeEditor->getLineCount() : 1;
+}
+
+void Runtime::codeEditorSetSyncPlaybackFromCursor(bool enabled)
+{
+    if (m_codeEditor) m_codeEditor->setSyncPlaybackFromCursor(enabled);
+}
+
+void Runtime::codeEditorSetOnCursorLineChanged(std::function<void(int line)> cb)
+{
+    if (m_codeEditor) m_codeEditor->setOnCursorLineChanged(std::move(cb));
 }
 
 void Runtime::drawCodeEditorWindow(bool& visible)

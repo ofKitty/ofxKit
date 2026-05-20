@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master, bleeding]
+    branches: [main, master, develop]
     paths-ignore:
       - "**/*.md"
       - "docs/**"
@@ -16,8 +16,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  OF_RELEASE: latest
-  OF_BRANCH: bleeding
+  # ofKitty forks (see https://github.com/ofKitty/openFrameworks)
+  OF_REPO: ofKitty/openFrameworks
+  OF_BRANCH: ofKitty
+  OFXKIT_REPO: ofKitty/ofxKit
+  # Prebuilt libs from https://github.com/ofKitty/apothecary/releases
+  APOTHECARY_REPO: ofKitty/apothecary
+  OF_RELEASE: bleeding
 
 # ---------------------------------------------------------------------------
 # Addon dependency repos (all under github.com/ofxyz or github.com/ofKitty).
@@ -61,9 +66,14 @@ jobs:
       - name: Checkout openFrameworks
         uses: actions/checkout@v4
         with:
-          repository: openframeworks/openFrameworks
+          repository: ${{ env.OF_REPO }}
           ref: ${{ env.OF_BRANCH }}
           path: openFrameworks
+
+      - name: Use ofKitty apothecary releases
+        run: |
+          sed -i "s|github.com/openframeworks/apothecary|github.com/${{ env.APOTHECARY_REPO }}|g" \
+            "$OF_ROOT/scripts/dev/download_libs.sh"
 
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2.17
@@ -81,6 +91,8 @@ jobs:
       - name: Checkout ofxKit
         uses: actions/checkout@v4
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || env.OFXKIT_REPO }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: openFrameworks/addons/ofxKit
 
       - name: Checkout addon dependencies
@@ -171,9 +183,14 @@ jobs:
       - name: Checkout openFrameworks
         uses: actions/checkout@v4
         with:
-          repository: openframeworks/openFrameworks
+          repository: ${{ env.OF_REPO }}
           ref: ${{ env.OF_BRANCH }}
           path: openFrameworks
+
+      - name: Use ofKitty apothecary releases
+        run: |
+          sed -i "s|github.com/openframeworks/apothecary|github.com/${{ env.APOTHECARY_REPO }}|g" \
+            openFrameworks/scripts/dev/download_libs.sh
 
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2.17
@@ -188,11 +205,13 @@ jobs:
       - name: Download OF libs
         run: |
           cd openFrameworks
-          ./scripts/msys2/download_libs.sh --silent
+          ./scripts/msys2/download_libs.sh -t $OF_RELEASE --silent
 
       - name: Checkout ofxKit
         uses: actions/checkout@v4
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || env.OFXKIT_REPO }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: openFrameworks/addons/ofxKit
 
       - name: Checkout addon dependencies

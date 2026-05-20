@@ -19,9 +19,10 @@
 #include <unordered_set>
 #include <vector>
 
+#include "panels/CodeEditorPanel.h"
+
 namespace ofkitty {
 
-class CodeEditorPanel;
 class PathEditorPanel;
 
 // ============================================================================
@@ -398,6 +399,11 @@ public:
     entt::entity selected() const       { return m_selected; }
     void         select(entt::entity e) { m_selected = e; }
 
+    /// Optional extra content drawn at the top of the Properties panel (e.g.
+    /// plotter zones / pen when no ECS entity is selected).
+    void setPropertiesSupplement(std::function<void()> draw);
+    void clearPropertiesSupplement();
+
     // -------------------------------------------------------------------------
     // UI identity
     // -------------------------------------------------------------------------
@@ -596,6 +602,14 @@ public:
                                         = TextEditor::LanguageDefinitionId::None);
     std::string   codeEditorGetText() const;
     void          codeEditorSetLanguage(TextEditor::LanguageDefinitionId lang);
+    void          codeEditorSetSidebarEntries(
+        std::vector<CodeEditorPanel::SidebarEntry> entries);
+    void          codeEditorSetHighlightLine(int line);
+    void          codeEditorSetCursorLine(int line);
+    int           codeEditorGetCursorLine() const;
+    int           codeEditorGetLineCount() const;
+    void          codeEditorSetSyncPlaybackFromCursor(bool enabled);
+    void          codeEditorSetOnCursorLineChanged(std::function<void(int line)> cb);
 
     // -------------------------------------------------------------------------
     // Path Editor — powered by ofxImGuiVectorEditor
@@ -933,6 +947,8 @@ private:
 
     std::vector<StatusItem> m_statusItems;
     bool             m_builtInStatusItemsRegistered {false};
+
+    std::function<void()> m_propertiesSupplement;
 
     // Viewport panels — one entry per addViewportWindow() call.
     // Stored as unique_ptr so the heap address is stable even if the vector

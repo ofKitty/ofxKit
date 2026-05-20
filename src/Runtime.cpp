@@ -126,22 +126,16 @@ void Runtime::onSetup(ofEventArgs&)
         m_pathEditor = std::make_unique<PathEditorPanel>();
     }
 
-    // Apply the persisted theme through ImTheme, then capture that unscaled
-    // baseline before ofxKit layers editor-scale policy on top.
+    if (!m_uiScaleSet)
+        loadUIScalePref();
+    if (!m_uiScaleSet)
+        m_uiScale = detectUIScale();
+
     if (!m_themeSet)
         loadThemePref();
-    applyTheme();
-    ImTheme::CaptureBaseStyle();
 
-    // Auto-detect HiDPI / 4K scale unless the user explicitly set one
-    // before setup, or a saved preference exists in bin/data/ (or the
-    // configured dataSubdir()).
-    if (!m_uiScaleSet) {
-        loadUIScalePref();
-    }
-    if (!m_uiScaleSet) {
-        m_uiScale = detectUIScale();
-    }
+    ImTheme::SetUIScale(m_uiScale);
+    applyTheme();
     applyUIScale();
 
     for (auto& hook : m_postSetupHooks)
