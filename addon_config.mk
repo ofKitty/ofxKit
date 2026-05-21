@@ -1,6 +1,6 @@
 meta:
 	ADDON_NAME = ofxKit
-	ADDON_DESCRIPTION = ofKitty runtime kit — composition-first Edit mode overlay for any ofBaseApp sketch.
+	ADDON_DESCRIPTION = ofKitty runtime kit — composition-first Edit Mode overlay.
 	ADDON_AUTHOR = @gitbruno
 	ADDON_TAGS = "addon" "ecs" "inspector" "editor" "ofkitty" "ofxkit"
 	ADDON_URL = https://github.com/ofkitty/ofxKit
