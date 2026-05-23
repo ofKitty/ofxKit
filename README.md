@@ -172,24 +172,24 @@ void ofApp::setup() {
 
 ### Components and systems
 
-Built-in **"+ Add Component"** picker rows for shipped **`ecs::*`** types come from **ofxEnTTKit** (`ecs::registerKitComponentMenu`), which `ofxKit` forwards into `runtime().registerComponent(...)` at startup. Component **property** panels stay type-driven via **ofxEnTTInspector**.
-
-Addons extend the picker by registering their own types:
+The **"+ Add Component"** picker is driven by **ofxEnTTKit** (`ecs::componentMenuEntries()`). ofxKit finalises the registry on attach; addons extend it via `ecs::registerComponent<T>()`. Component **property** panels stay type-driven via **ofxEnTTInspector**.
 
 ```cpp
+#include "component_editor_registration.h"
+
 // minimal — has / remove generated automatically from T
-ofkitty::runtime().registerComponent<grbl::MachineStateComponent>(
+ecs::registerComponent<grbl::MachineStateComponent>(
     "Machine State", "Machines");
 
 // custom add — when default emplace<T>(entity) needs extra work
-ofkitty::runtime().registerComponent<grbl::MachineStateComponent>(
+ecs::registerComponent<grbl::MachineStateComponent>(
     "Machine State", "Machines",
     [](entt::registry& r, entt::entity e) {
         r.emplace<grbl::MachineStateComponent>(e).connect("/dev/ttyUSB0");
     });
 ```
 
-See [`docs/component-registry.md`](docs/component-registry.md) for the full API including full-control registration, query helpers, and the built-in category list.
+See [ofxEnTTKit/docs/component-registry.md](../ofxEnTTKit/docs/component-registry.md) for the full API. See [docs/component-registry.md](docs/component-registry.md) for how ofxKit consumes the registry.
 
 The intended system API should let kit addons register lifecycle systems against the active registry:
 
@@ -200,9 +200,9 @@ ofkitty::runtime().registerSystem<grbl::MachineSystem>("Machine");
 Those APIs should live beside the window registry, not inside it:
 
 ```text
-WindowRegistry       UI panels and menu visibility
-ComponentRegistry    component labels, add/remove hooks, inspector callbacks
-SystemRegistry       setup/update/draw/cleanup lifecycle orchestration
+WindowRegistry       UI panels and menu visibility (ofxKit)
+ComponentRegistry    picker rows — owned by ofxEnTTKit (ecs::)
+SystemRegistry       setup/update/draw/cleanup lifecycle orchestration (planned)
 ```
 
 ---
@@ -228,10 +228,6 @@ SystemRegistry       setup/update/draw/cleanup lifecycle orchestration
 | `runtime().enableBuiltInWindows()`               | Register the standard set: Scene + Properties                            |
 | `runtime().enableAllBuiltInWindows()`            | Register all built-in windows                                            |
 | `runtime().addMenuBarGroup(name, cb)`            | Add a top-level menu group to the main menu bar                          |
-| `runtime().registerComponent<T>(name, cat)`      | Register a component type in the Add Component picker (template form)    |
-| `runtime().registerComponent(desc)`              | Register a component with explicit has/add/remove lambdas                |
-| `runtime().componentDescriptors()`               | All registered `ComponentDescriptor` entries in registration order       |
-| `runtime().componentCategories()`               | Unique category names in registration order                              |
 | `runtime().showRulers()`                         | Whether pixel rulers are visible                                         |
 | `runtime().setShowRulers(bool)`                  | Show/hide the pixel ruler overlay                                        |
 | `runtime().toggleRulers()`                       | Toggle ruler visibility (also bound to F2)                               |

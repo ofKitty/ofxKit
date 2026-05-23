@@ -755,64 +755,6 @@ public:
     std::vector<StatusItem>& statusItems() { return m_statusItems; }
     const std::vector<StatusItem>& statusItems() const { return m_statusItems; }
 
-    // -------------------------------------------------------------------------
-    // Component registry
-    // -------------------------------------------------------------------------
-    // Registers a component type so it appears in the "Add Component" picker
-    // in the Properties panel.  The template shorthand generates has / remove
-    // automatically from T; supply a custom add only when the default
-    // emplace<T>(entity) needs extra initialisation (e.g. mesh_component needs
-    // rebuild()).
-    //
-    // Addons register their own components in setup() or a kit-init helper:
-    //
-    //   ofkitty::runtime().registerComponent<MyComp>(
-    //       "My Component", "My Category",
-    //       [](entt::registry& r, entt::entity e) {
-    //           r.emplace<MyComp>(e).initialise();
-    //       });
-    //
-    // Shipped-kit picker rows come from ecs::registerKitComponentMenu(...)
-    // (Runtime::registerBuiltInComponents() in onSetup() forwards each row here).
-    // -------------------------------------------------------------------------
-
-    struct ComponentDescriptor {
-        std::string  name;
-        std::string  category;     // groups entries in the picker UI
-        std::string  description;  // tooltip (optional)
-
-        std::function<bool(entt::registry&, entt::entity)> has;
-        std::function<void(entt::registry&, entt::entity)> add;
-        std::function<void(entt::registry&, entt::entity)> remove;
-    };
-
-    /// Full-control registration — supply all three lambdas explicitly.
-    void registerComponent(ComponentDescriptor desc);
-
-    /// Template shorthand.  has() and remove() are generated from T.
-    /// Provide add only when default emplace<T>(entity) is not sufficient.
-    template<typename T>
-    void registerComponent(
-            const std::string& name,
-            const std::string& category,
-            std::function<void(entt::registry&, entt::entity)> add = {})
-    {
-        ComponentDescriptor d;
-        d.name     = name;
-        d.category = category;
-        d.has    = [](entt::registry& r, entt::entity e) { return r.all_of<T>(e); };
-        d.add    = add ? std::move(add)
-                       : [](entt::registry& r, entt::entity e) {
-                             if (!r.all_of<T>(e)) r.emplace<T>(e);
-                         };
-        d.remove = [](entt::registry& r, entt::entity e) { r.remove<T>(e); };
-        registerComponent(std::move(d));
-    }
-
-    const std::vector<ComponentDescriptor>& componentDescriptors() const;
-    /// Returns unique category names in registration order.
-    std::vector<std::string>                componentCategories()   const;
-
 private:
     Runtime() = default;
 
@@ -921,8 +863,7 @@ private:
 
     ofxImGui::Gui    m_gui;
 
-    std::vector<ComponentDescriptor> m_components;
-    bool             m_builtInComponentsRegistered {false};
+    bool             m_componentMenuFinalized {false};
 
     AppPrefs         m_prefs;
     bool             m_showRulers         {false};

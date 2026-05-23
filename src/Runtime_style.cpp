@@ -155,42 +155,13 @@ void Runtime::ensureAppName()
     m_appName = name;
 }
 
-void Runtime::registerComponent(ComponentDescriptor desc)
-{
-    m_components.push_back(std::move(desc));
-}
-
-const std::vector<Runtime::ComponentDescriptor>& Runtime::componentDescriptors() const
-{
-    return m_components;
-}
-
-std::vector<std::string> Runtime::componentCategories() const
-{
-    std::vector<std::string> cats;
-    for (auto& d : m_components) {
-        if (std::find(cats.begin(), cats.end(), d.category) == cats.end())
-            cats.push_back(d.category);
-    }
-    return cats;
-}
-
 void Runtime::registerBuiltInComponents()
 {
-    if (m_builtInComponentsRegistered)
+    if (m_componentMenuFinalized)
         return;
-    m_builtInComponentsRegistered = true;
+    m_componentMenuFinalized = true;
 
-    ecs::registerKitComponentMenu([this](const ecs::ComponentMenuEntry& row) {
-        ComponentDescriptor d;
-        d.name        = row.name;
-        d.category    = row.category;
-        d.description = row.description;
-        d.has         = row.has;
-        d.add         = row.add;
-        d.remove      = row.remove;
-        registerComponent(std::move(d));
-    });
+    ecs::finalizeComponentMenu();
 }
 
 } // namespace ofkitty

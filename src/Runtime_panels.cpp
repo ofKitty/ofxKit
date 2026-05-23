@@ -347,7 +347,7 @@ void Runtime::drawPropertiesWindow(bool& visible)
                 ImGui::Separator();
 
                 std::string lastCat;
-                for (auto& desc : m_components) {
+                for (const auto& desc : ecs::componentMenuEntries()) {
                     if (desc.category != lastCat) {
                         if (!lastCat.empty())
                             ImGui::Separator();
