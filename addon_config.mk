@@ -8,9 +8,6 @@ meta:
 common:
 	ADDON_DEPENDENCIES = ofxEnTTKit ofxEnTTInspector ofxImGui ofxImGuiStyle ofxImGuiTextEdit ofxImGuiFileDialog ofxImGuiVectorEditor ofxImGuizmo
 
-	# $(OF_ROOT)/addons needed so cross-addon includes resolve correctly.
-	ADDON_INCLUDES += $(OF_ROOT)/addons
-
 linux64:
 vs:
 	ADDON_CPPFLAGS = /bigobj

@@ -2,7 +2,7 @@
 
 #include "ofMain.h"
 #include "imgui.h"
-#include <ofxImGuiStyle/src/IconsFontAwesome5.h>
+#include "IconsFontAwesome5.h"
 
 #include <atomic>
 #include <cstring>

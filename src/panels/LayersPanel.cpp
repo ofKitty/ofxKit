@@ -3,8 +3,8 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
-#include <ofxImGuiStyle/src/ImFonts.h>
-#include <ofxImGuiStyle/src/IconsFontAwesome5.h>
+#include "ImFonts.h"
+#include "IconsFontAwesome5.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>

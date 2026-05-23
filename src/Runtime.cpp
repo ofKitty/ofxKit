@@ -87,8 +87,11 @@ void Runtime::onSetup(ofEventArgs&)
 
     // Load Input Sans + Font Awesome icons so toolbar / UI can use FA glyphs.
     // Must happen right after gui.setup() before the first frame renders.
-    if (ImFont* font = ImFonts::LoadDefaultFonts(ImGui::GetIO().Fonts, 14.0f))
+    ImFont* codeEditorFont = nullptr;
+    if (ImFont* font = ImFonts::LoadDefaultFonts(ImGui::GetIO().Fonts, 14.0f)) {
         m_gui.setDefaultFont(font);
+        codeEditorFont = ImFonts::LoadCodeEditorFont(ImGui::GetIO().Fonts, 14.0f);
+    }
     m_gui.rebuildFontsTexture();
 
     // Register event filters that block OF mouse/keyboard events from reaching
@@ -111,6 +114,9 @@ void Runtime::onSetup(ofEventArgs&)
     if (!m_codeEditor) {
         m_codeEditor = std::make_unique<CodeEditorPanel>();
         m_codeEditor->setup();
+        if (codeEditorFont) {
+            m_codeEditor->setFont(codeEditorFont);
+        }
         m_codeEditor->setDialogCallbacks(
             [this](const std::string& key, const std::string& title, const std::string& filters,
                    std::function<void(const std::string& path)> onConfirm) {
@@ -212,6 +218,7 @@ void Runtime::onExit(ofEventArgs&)
     // Ensure imgui.ini and our prefs are written before the process ends.
     // ImGui's auto-save has a 5-second delay so the last docking state can
     // otherwise be lost if the window is closed quickly.
+    saveFileDialogPrefs();
     saveAppPrefs();
 }
 

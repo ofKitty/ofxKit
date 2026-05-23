@@ -3,14 +3,14 @@
 #include "ofMain.h"
 #include "RulerUtil.h"
 #include "ShortcutManager.h"
-#include <ofxImGui/src/ofxImGui.h>
-#include <ofxImGui/src/GuiEventHelper.h>
-#include <ofxImGuiStyle/src/ImTheme.h>
-#include <ofxImGuiStyle/src/ImThemeRegistry.h>
-#include <ofxImGuiStyle/src/ImFonts.h>
-#include <ofxImGuiFileDialog/src/ofxImGuiFileDialog.h>
-#include <ofxImGuiTextEdit/src/ofxImGuiTextEdit.h>
-#include <ofxImGuizmo/src/ofxImGuizmo.h>
+#include "ofxImGui.h"
+#include "GuiEventHelper.h"
+#include "ImTheme.h"
+#include "ImThemeRegistry.h"
+#include "ImFonts.h"
+#include "ofxImGuiFileDialog.h"
+#include "ofxImGuiTextEdit.h"
+#include "ofxImGuizmo.h"
 #include <entt.hpp>
 #include <functional>
 #include <memory>
@@ -873,6 +873,10 @@ private:
     void drawCodeEditorWindow(bool& visible);
     void drawPathEditorWindow(bool& visible);
     void processFileDialogs();
+    void ensureFileDialogPrefsLoaded();
+    void restoreFileDialogPlaces();
+    void saveFileDialogPrefs();
+    IGFD::FileDialogConfig makeFileDialogConfig() const;
     void drawGizmoOverlay();
     void drawGizmoInViewport(ViewportInstance& vp, const ofRectangle& imgScreenRect);
 
@@ -959,6 +963,9 @@ private:
     // ── Tool state ────────────────────────────────────────────────────────────
     // File dialogs
     std::unordered_map<std::string, std::function<void(const std::string&)>> m_fileDialogCbs;
+    bool        m_fileDialogPrefsLoaded {false};
+    std::string m_fileDialogPlacesSerialized;
+    std::string m_fileDialogLastPath;
 
     // Gizmo — main scene camera
     ofCamera*          m_sceneCamera    {nullptr};

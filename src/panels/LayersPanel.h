@@ -1,8 +1,8 @@
 #pragma once
 
 #include <entt/entt.hpp>
-#include <ofxEnTTKit/src/components/layer_components.h>
-#include <ofxEnTTKit/src/components/hierarchy_components.h>
+#include "components/layer_components.h"
+#include "components/hierarchy_components.h"
 #include <functional>
 #include <string>
 #include <unordered_map>

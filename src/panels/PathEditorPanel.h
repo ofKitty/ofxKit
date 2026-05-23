@@ -1,7 +1,7 @@
 #pragma once
 
 #include <entt.hpp>
-#include <ofxImGuiVectorEditor/src/ofxImGuiVectorEditor.h>
+#include "ofxImGuiVectorEditor.h"
 
 namespace ofkitty {
 

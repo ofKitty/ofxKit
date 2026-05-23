@@ -15,6 +15,11 @@ void ResourcesPanel::setOnPlace(std::function<void(const Resource&)> cb)
     m_onPlace = std::move(cb);
 }
 
+void ResourcesPanel::setOnResourceLoaded(std::function<void(Resource&)> cb)
+{
+    m_onResourceLoaded = std::move(cb);
+}
+
 void ResourcesPanel::addResource(Resource r)
 {
     if (!r.loaded) {
@@ -25,6 +30,9 @@ void ResourcesPanel::addResource(Resource r)
         }
     }
     m_resources.push_back(std::move(r));
+    m_selected = (int)m_resources.size() - 1;
+    if (m_onResourceLoaded)
+        m_onResourceLoaded(m_resources.back());
 }
 
 // ============================================================================
@@ -50,6 +58,8 @@ void ResourcesPanel::loadImage(const std::string& path)
     }
     m_resources.push_back(std::move(r));
     m_selected = (int)m_resources.size() - 1;
+    if (m_onResourceLoaded)
+        m_onResourceLoaded(m_resources.back());
 }
 
 void ResourcesPanel::loadSVG(const std::string& path)
@@ -63,6 +73,8 @@ void ResourcesPanel::loadSVG(const std::string& path)
     r.loaded = ofFile(path).exists();
     m_resources.push_back(std::move(r));
     m_selected = (int)m_resources.size() - 1;
+    if (m_onResourceLoaded)
+        m_onResourceLoaded(m_resources.back());
 }
 
 void ResourcesPanel::loadGCode(const std::string& path)
@@ -76,6 +88,8 @@ void ResourcesPanel::loadGCode(const std::string& path)
     r.loaded = !r.text.empty();
     m_resources.push_back(std::move(r));
     m_selected = (int)m_resources.size() - 1;
+    if (m_onResourceLoaded)
+        m_onResourceLoaded(m_resources.back());
 }
 
 // ============================================================================

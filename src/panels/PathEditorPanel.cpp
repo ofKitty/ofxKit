@@ -1,6 +1,6 @@
 #include "PathEditorPanel.h"
 
-#include <ofxEnTTKit/src/ofxEnTTKit.h>
+#include "ofxEnTTKit.h"
 
 #include <imgui.h>
 

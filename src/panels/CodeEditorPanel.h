@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include <ofxImGuiTextEdit/src/ofxImGuiTextEdit.h>
+#include "ofxImGuiTextEdit.h"
 
 namespace ofkitty {
 
@@ -59,8 +59,12 @@ public:
     TextEditor&       editor() { return m_editor; }
     const TextEditor& editor() const { return m_editor; }
 
+    /// Monospace font for the editor surface (Input Sans is proportional).
+    void setFont(ImFont* font) { m_font = font; }
+
 private:
     TextEditor  m_editor;
+    ImFont*     m_font = nullptr;
     std::string m_filePath;
 
     std::function<void(const std::string& key,

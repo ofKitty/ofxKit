@@ -1,12 +1,12 @@
 #include "Runtime.h"
 #include "Runtime_private.h"
 
-#include <ofxEnTTKit/src/component_editor_registration.h>
+#include "component_editor_registration.h"
 
 #include "ofJson.h"
 
-#include <ofxImGuiStyle/src/ImTheme.h>
-#include <ofxImGuiStyle/src/ImThemeRegistry.h>
+#include "ImTheme.h"
+#include "ImThemeRegistry.h"
 
 #include <algorithm>
 #include <cctype>

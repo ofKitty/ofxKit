@@ -3,29 +3,126 @@
 #include "panels/PathEditorPanel.h"
 #include "RulerUtil.h"
 
-#include <ofxEnTTKit/src/ofxEnTTKit.h>
-#include <ofxImGui/src/ofxImGui.h>
+#include "ofxEnTTKit.h"
+#include "ofxImGui.h"
 
-#include <ofxImGuiFileDialog/src/ofxImGuiFileDialog.h>
+#include "ofxImGuiFileDialog.h"
 
 #include "imgui.h"
+#include "ofFileUtils.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cfloat>
+#include <cstdlib>
 
 namespace ofkitty {
+namespace {
+
+#ifdef USE_PLACES_FEATURE
+std::string envPath(const char* var)
+{
+    if (const char* v = std::getenv(var)) return v;
+    return {};
+}
+
+void addPlaceIfMissing(const std::string& groupName,
+                       const std::string& name,
+                       const std::string& path)
+{
+    if (path.empty()) return;
+    auto* grp = ImGuiFileDialog::Instance()->GetPlacesGroupPtr(groupName);
+    if (!grp) return;
+    for (const auto& place : grp->places) {
+        if (place.path == path) return;
+    }
+    grp->AddPlace(name, path, true);
+}
+
+void seedDefaultFileDialogPlaces()
+{
+    const std::string home = [] {
+#ifdef TARGET_WIN32
+        std::string p = envPath("USERPROFILE");
+        if (!p.empty()) return p;
+#endif
+        return envPath("HOME");
+    }();
+
+    if (!home.empty()) {
+        addPlaceIfMissing("Bookmarks", "Home", home);
+        addPlaceIfMissing("Bookmarks", "Documents", ofFilePath::join(home, "Documents"));
+        addPlaceIfMissing("Bookmarks", "Downloads", ofFilePath::join(home, "Downloads"));
+        addPlaceIfMissing("Bookmarks", "Desktop", ofFilePath::join(home, "Desktop"));
+    }
+
+    const std::string dataDir = ofToDataPath("", true);
+    if (!dataDir.empty())
+        addPlaceIfMissing("Bookmarks", "App Data", dataDir);
+}
+#endif  // USE_PLACES_FEATURE
+
+}  // namespace
+
+void Runtime::ensureFileDialogPrefsLoaded()
+{
+    if (m_fileDialogPrefsLoaded) return;
+
+    const std::string placesFile = dataPath("fileDialogPlaces.txt");
+    if (ofFile::doesFileExist(placesFile))
+        m_fileDialogPlacesSerialized = ofBufferFromFile(placesFile, false).getText();
+
+    const std::string lastPathFile = dataPath("fileDialogLastPath.txt");
+    if (ofFile::doesFileExist(lastPathFile))
+        m_fileDialogLastPath = ofBufferFromFile(lastPathFile, false).getText();
+
+    m_fileDialogPrefsLoaded = true;
+}
+
+void Runtime::restoreFileDialogPlaces()
+{
+#ifdef USE_PLACES_FEATURE
+    if (!m_fileDialogPlacesSerialized.empty())
+        ImGuiFileDialog::Instance()->DeserializePlaces(m_fileDialogPlacesSerialized);
+    seedDefaultFileDialogPlaces();
+#endif
+}
+
+void Runtime::saveFileDialogPrefs()
+{
+#ifdef USE_PLACES_FEATURE
+    m_fileDialogPlacesSerialized = ImGuiFileDialog::Instance()->SerializePlaces();
+    {
+        ofBuffer buf;
+        buf.set(m_fileDialogPlacesSerialized);
+        ofBufferToFile(dataPath("fileDialogPlaces.txt"), buf, false);
+    }
+#endif
+    if (!m_fileDialogLastPath.empty()) {
+        ofBuffer buf;
+        buf.set(m_fileDialogLastPath);
+        ofBufferToFile(dataPath("fileDialogLastPath.txt"), buf, false);
+    }
+}
+
+IGFD::FileDialogConfig Runtime::makeFileDialogConfig() const
+{
+    IGFD::FileDialogConfig cfg;
+    cfg.path  = m_fileDialogLastPath.empty() ? "." : m_fileDialogLastPath;
+    cfg.flags = ImGuiFileDialogFlags_Modal | ImGuiFileDialogFlags_ShowDevicesButton;
+    return cfg;
+}
 
 void Runtime::openFileDialog(const std::string& key,
                              const std::string& title,
                              const std::string& filters,
                              std::function<void(const std::string& path)> onConfirm)
 {
+    ensureFileDialogPrefsLoaded();
     m_fileDialogCbs[key] = std::move(onConfirm);
-    IGFD::FileDialogConfig cfg;
-    cfg.path  = ".";
-    cfg.flags = ImGuiFileDialogFlags_Modal;
+    IGFD::FileDialogConfig cfg = makeFileDialogConfig();
     ImGuiFileDialog::Instance()->OpenDialog(key, title, filters.c_str(), cfg);
+    restoreFileDialogPlaces();
 }
 
 void Runtime::saveFileDialog(const std::string& key,
@@ -34,13 +131,13 @@ void Runtime::saveFileDialog(const std::string& key,
                              const std::string& defaultFileName,
                              std::function<void(const std::string& path)> onConfirm)
 {
+    ensureFileDialogPrefsLoaded();
     m_fileDialogCbs[key] = std::move(onConfirm);
-    IGFD::FileDialogConfig cfg;
-    cfg.path     = ".";
+    IGFD::FileDialogConfig cfg = makeFileDialogConfig();
     cfg.fileName = defaultFileName;
-    cfg.flags =
-        ImGuiFileDialogFlags_Modal | ImGuiFileDialogFlags_ConfirmOverwrite;
+    cfg.flags |= ImGuiFileDialogFlags_ConfirmOverwrite;
     ImGuiFileDialog::Instance()->OpenDialog(key, title, filters.c_str(), cfg);
+    restoreFileDialogPlaces();
 }
 
 void Runtime::processFileDialogs()
@@ -51,8 +148,16 @@ void Runtime::processFileDialogs()
     for (auto it = m_fileDialogCbs.begin(); it != m_fileDialogCbs.end();) {
         const std::string& key = it->first;
         if (ImGuiFileDialog::Instance()->Display(key, ImGuiWindowFlags_NoCollapse, minSz, maxSz)) {
-            if (ImGuiFileDialog::Instance()->IsOk() && it->second)
-                it->second(ImGuiFileDialog::Instance()->GetFilePathName());
+            if (ImGuiFileDialog::Instance()->IsOk() && it->second) {
+                const std::string path = ImGuiFileDialog::Instance()->GetFilePathName();
+                it->second(path);
+                if (!path.empty()) {
+                    m_fileDialogLastPath = ofFilePath::getEnclosingDirectory(path, false);
+                    if (m_fileDialogLastPath.empty())
+                        m_fileDialogLastPath = path;
+                }
+            }
+            saveFileDialogPrefs();
             ImGuiFileDialog::Instance()->Close();
             it = m_fileDialogCbs.erase(it);
         } else {

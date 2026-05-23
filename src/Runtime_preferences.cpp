@@ -1,8 +1,8 @@
 #include "Runtime.h"
 #include "Runtime_private.h"
 
-#include <ofxImGuiStyle/src/ImTheme.h>
-#include <ofxImGuiStyle/src/ImThemeRegistry.h>
+#include "ImTheme.h"
+#include "ImThemeRegistry.h"
 #include "imgui_internal.h"
 
 #include <ofMain.h>

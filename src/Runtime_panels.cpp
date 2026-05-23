@@ -1,11 +1,11 @@
 #include "Runtime.h"
 #include "Runtime_private.h"
 
-#include <ofxEnTTKit/src/component_editor_registration.h>
-#include <ofxEnTTKit/src/ofxEnTTKit.h>
-#include <ofxEnTTInspector/src/ofxEnTTInspector.h>
-#include <ofxImGuiStyle/src/IconsFontAwesome5.h>
-#include <ofxImGuiStyle/src/ImFonts.h>
+#include "component_editor_registration.h"
+#include "ofxEnTTKit.h"
+#include "ofxEnTTInspector.h"
+#include "IconsFontAwesome5.h"
+#include "ImFonts.h"
 
 #include <imgui.h>
 

@@ -690,7 +690,13 @@ void CodeEditorPanel::draw(bool& visible)
     ImVec2 editorSize = ImGui::GetContentRegionAvail();
     editorSize.y -= statusH;
 
+    if (m_font) {
+        ImGui::PushFont(m_font);
+    }
     m_editor.Render("##code", ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows), editorSize);
+    if (m_font) {
+        ImGui::PopFont();
+    }
 
     if (m_syncPlaybackFromCursor && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
         const int curLine = getCursorLine();

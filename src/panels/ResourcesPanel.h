@@ -60,10 +60,10 @@ public:
     // -------------------------------------------------------------------------
 
     /// Called when the user double-clicks or presses the "Place" button.
-    /// The callback owns what "placing" means (load into engine, open editor,
-    /// etc.). It is allowed to call any engine/runtime methods — it runs on
-    /// the main thread outside the ImGui rendering pass.
     void setOnPlace(std::function<void(const Resource&)> cb);
+
+    /// Called after a resource file is loaded into the panel list.
+    void setOnResourceLoaded(std::function<void(Resource&)> cb);
 
     // -------------------------------------------------------------------------
     // Resource management
@@ -93,6 +93,7 @@ private:
 
     std::vector<Resource>                  m_resources;
     std::function<void(const Resource&)>   m_onPlace;
+    std::function<void(Resource&)>         m_onResourceLoaded;
     int                                    m_selected    {-1};
 
     // Thumbnail texture size drawn in the list.
