@@ -7,6 +7,8 @@ namespace ofkitty {
 
 void ChainEditor::draw()
 {
+    ImGui::PushID(m_payloadTag);
+
     const auto drawList = [&]() {
         int removeIdx = -1;
 
@@ -80,6 +82,8 @@ void ChainEditor::draw()
 
     if (!m_footerHint.empty())
         ImGui::TextDisabled("%s", m_footerHint.c_str());
+
+    ImGui::PopID();
 }
 
 } // namespace ofkitty

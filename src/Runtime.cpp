@@ -412,13 +412,26 @@ void Runtime::drawOverlay()
     m_gui.end();
     m_gui.draw();
 
-    if (m_sceneEasyCam) {
-        m_sceneViewport.update(*m_sceneEasyCam);
+    if (m_sceneCamera) {
+        const ofRectangle sceneRect =
+            m_editMode
+                ? m_gui.getMainWindowViewportRect(true, true, true)
+                : ofRectangle(0.f, 0.f, ofGetWidth(), ofGetHeight());
+
+        m_sceneViewport.update(*m_sceneCamera, sceneRect);
+
         const bool wantsInput = m_sceneViewport.isHovered() && !isGizmoActive();
-        if (wantsInput)
-            m_sceneEasyCam->enableMouseInput();
-        else
-            m_sceneEasyCam->disableMouseInput();
+        if (m_sceneEasyCam) {
+            if (wantsInput)
+                m_sceneEasyCam->enableMouseInput();
+            else
+                m_sceneEasyCam->disableMouseInput();
+        }
+
+        if (m_editMode && wantsInput && detail::isClickWithoutDrag()) {
+            const ImGuiIO& io = ImGui::GetIO();
+            pickAtScreen(*m_sceneCamera, {io.MousePos.x, io.MousePos.y}, sceneRect);
+        }
     }
 }
 

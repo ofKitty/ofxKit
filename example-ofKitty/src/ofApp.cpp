@@ -162,6 +162,7 @@ void ofApp::update() {
 
 void ofApp::draw() {
     m_cam.begin();
+    runtime().captureSceneView();
     ofEnableDepthTest();
 
     if (m_showGrid) drawGrid();

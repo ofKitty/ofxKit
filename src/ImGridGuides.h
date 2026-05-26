@@ -54,6 +54,13 @@ struct ImGridGuides {
     std::vector<float> guidesY;  ///< horizontal lines at these content-mm Y positions
     ImU32 colGuide = IM_COL32(0, 190, 255, 160);
 
+    /// Paper / grid area within preview content coords (mm). When zero, the
+    /// caller's paperW/H default to the full viewport content size.
+    float areaOffsetX = 0.f;
+    float areaOffsetY = 0.f;
+    float paperW      = 0.f;
+    float paperH      = 0.f;
+
     // -------------------------------------------------------------------------
     /// Draw all enabled overlays.
     /// @param dl        ImGui draw list (e.g. ImGui::GetWindowDrawList()).
@@ -76,27 +83,27 @@ struct ImGridGuides {
         const float visYmin = (clipY - oy) / zoom;
         const float visYmax = (clipY + clipH - oy) / zoom;
 
-        // Clamp to paper bounds (no lines outside paper)
-        const float xMin = std::max(0.f, visXmin);
-        const float xMax = std::min(paperW, visXmax);
-        const float yMin = std::max(0.f, visYmin);
-        const float yMax = std::min(paperH, visYmax);
+        // Paper-local range (0..paperW/H within the preview content frame).
+        const float localXmin = std::max(0.f, visXmin - areaOffsetX);
+        const float localXmax = std::min(paperW, visXmax - areaOffsetX);
+        const float localYmin = std::max(0.f, visYmin - areaOffsetY);
+        const float localYmax = std::min(paperH, visYmax - areaOffsetY);
 
-        // Helper: screen coords from content coords
-        auto sx = [&](float cx) { return ox + cx * zoom; };
-        auto sy = [&](float cy) { return oy + cy * zoom; };
+        // Helper: screen coords from paper-local coords
+        auto sx = [&](float cx) { return ox + (areaOffsetX + cx) * zoom; };
+        auto sy = [&](float cy) { return oy + (areaOffsetY + cy) * zoom; };
 
         // Helper: draw one tier of grid lines
         auto drawGridTier = [&](float step, ImU32 col, float thickness) {
             if (step <= 0.f) return;
             // Vertical lines
-            const float xFirst = std::ceil(xMin / step) * step;
-            for (float x = xFirst; x <= xMax + 1e-4f; x += step)
-                dl->AddLine({sx(x), sy(yMin)}, {sx(x), sy(yMax)}, col, thickness);
+            const float xFirst = std::ceil(localXmin / step) * step;
+            for (float x = xFirst; x <= localXmax + 1e-4f; x += step)
+                dl->AddLine({sx(x), sy(localYmin)}, {sx(x), sy(localYmax)}, col, thickness);
             // Horizontal lines
-            const float yFirst = std::ceil(yMin / step) * step;
-            for (float y = yFirst; y <= yMax + 1e-4f; y += step)
-                dl->AddLine({sx(xMin), sy(y)}, {sx(xMax), sy(y)}, col, thickness);
+            const float yFirst = std::ceil(localYmin / step) * step;
+            for (float y = yFirst; y <= localYmax + 1e-4f; y += step)
+                dl->AddLine({sx(localXmin), sy(y)}, {sx(localXmax), sy(y)}, col, thickness);
         };
 
         if (showGrid) {
@@ -108,18 +115,18 @@ struct ImGridGuides {
             drawGridTier(50.f, col50mm, 1.5f);
 
             // Centre lines (full paper width/height)
-            if (paperW * 0.5f >= xMin && paperW * 0.5f <= xMax)
-                dl->AddLine({sx(paperW * 0.5f), sy(yMin)},
-                            {sx(paperW * 0.5f), sy(yMax)}, colCentre, 1.5f);
-            if (paperH * 0.5f >= yMin && paperH * 0.5f <= yMax)
-                dl->AddLine({sx(xMin), sy(paperH * 0.5f)},
-                            {sx(xMax), sy(paperH * 0.5f)}, colCentre, 1.5f);
+            if (paperW * 0.5f >= localXmin && paperW * 0.5f <= localXmax)
+                dl->AddLine({sx(paperW * 0.5f), sy(localYmin)},
+                            {sx(paperW * 0.5f), sy(localYmax)}, colCentre, 1.5f);
+            if (paperH * 0.5f >= localYmin && paperH * 0.5f <= localYmax)
+                dl->AddLine({sx(localXmin), sy(paperH * 0.5f)},
+                            {sx(localXmax), sy(paperH * 0.5f)}, colCentre, 1.5f);
 
-            // Origin cross (small tick marks at (0,0))
+            // Origin cross (small tick marks at paper top-left)
             const float ms = 5.f; // tick length in mm
-            if (0.f >= xMin && ms <= xMax)
+            if (localXmin <= 0.f && ms <= localXmax)
                 dl->AddLine({sx(0.f), sy(0.f)}, {sx(ms), sy(0.f)}, colOrigin,  2.f);
-            if (0.f >= yMin && ms <= yMax)
+            if (localYmin <= 0.f && ms <= localYmax)
                 dl->AddLine({sx(0.f), sy(0.f)}, {sx(0.f), sy(ms)}, colOriginY, 2.f);
         }
 

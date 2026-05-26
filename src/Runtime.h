@@ -299,6 +299,11 @@ public:
         ImGridGuides*  gridGuides = nullptr;
 
         // ---- FBO caching ----------------------------------------------------
+        // View/projection captured during the last FBO render (inside cam.begin).
+        // Used by the Scene View gizmo so matrices match the rendered image.
+        glm::mat4 gizmoView {1.f};
+        glm::mat4 gizmoProj {1.f};
+
         // Set dirty = true whenever rendered content changes (paths, toggles, etc.)
         // Pan and zoom changes never require a re-render — they only affect the
         // ImGui::Image blit position and size.
@@ -411,6 +416,10 @@ public:
     entt::entity selected() const;
     void         select(entt::entity e);
 
+    /// Ray-pick selectable mesh entities under a screen point (edit mode only).
+    /// Pass the same camera and viewport used to render the scene.
+    void pickAtScreen(const ofCamera& cam, glm::vec2 screenPx, const ofRectangle& viewport);
+
     /// Optional extra content drawn at the top of the Properties panel (e.g.
     /// plotter zones / pen when no ECS entity is selected).
     void setPropertiesSupplement(std::function<void()> draw);
@@ -419,6 +428,12 @@ public:
     /// Called when `inspectEntity()` reports a change for the selected entity.
     void setOnEntityInspectorChanged(std::function<void(entt::entity)> cb);
     void clearOnEntityInspectorChanged();
+
+    /// Optional label for entities without node / Relationship names (e.g. plotter zones).
+    using EntityTreeLabelFn = std::function<std::string(entt::registry&, entt::entity)>;
+    void setEntityTreeLabelResolver(EntityTreeLabelFn fn);
+    void clearEntityTreeLabelResolver();
+    std::string entityTreeLabel(entt::registry& reg, entt::entity e) const;
 
     // -------------------------------------------------------------------------
     // UI identity
@@ -870,6 +885,7 @@ private:
     // registerWindow() applies the saved state so addon windows also restore.
     std::unordered_map<std::string, bool> m_savedWindowVisibility;
     std::vector<ToolbarItem>   m_toolbarItems;
+    bool                       m_toolbarHorizontal {true};
     std::vector<std::pair<std::string, MenuBarCallback>> m_menuGroups;
     std::vector<MenuBarCallback> m_menuBarRawCallbacks;
     std::vector<PostSetupHook>  m_postSetupHooks;
@@ -916,6 +932,7 @@ private:
 
     std::function<void()> m_propertiesSupplement;
     std::function<void(entt::entity)> m_onEntityInspectorChanged;
+    EntityTreeLabelFn m_entityTreeLabelResolver;
 
     // Viewport panels — one entry per addViewportWindow() call.
     // Stored as unique_ptr so the heap address is stable even if the vector

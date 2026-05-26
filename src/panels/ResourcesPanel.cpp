@@ -64,7 +64,7 @@ entt::entity ResourcesPanel::createResourceEntity(Resource& r)
 
     reg.emplace<ecs::tag_component>(e, r.name);
 
-    reg.emplace<ecs::filepath_component>(e, std::filesystem::path(r.path));
+    reg.emplace<ecs::filepath_component>(e, r.path);
 
     reg.emplace<ecs::selectable_component>(e, false);
 
@@ -72,7 +72,7 @@ entt::entity ResourcesPanel::createResourceEntity(Resource& r)
 
     if (r.type == ResourceType::Image && r.loaded)
 
-        reg.emplace<ecs::image_component>(e, std::filesystem::path(r.path));
+        reg.emplace<ecs::image_component>(e, r.path);
 
 
 
@@ -124,7 +124,7 @@ void ResourcesPanel::updateResourceEntity(Resource& r)
 
     if (reg.all_of<ecs::filepath_component>(r.entity))
 
-        reg.get<ecs::filepath_component>(r.entity).path = std::filesystem::path(r.path);
+        reg.get<ecs::filepath_component>(r.entity).path = r.path;
 
 
 

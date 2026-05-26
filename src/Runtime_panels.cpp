@@ -30,6 +30,8 @@ void drawEntityNode(entt::registry& reg, entt::entity e)
             name = nc->getName();
     }
     if (name.empty())
+        name = Runtime::instance().entityTreeLabel(reg, e);
+    if (name.empty())
         name = "Entity " + std::to_string(static_cast<uint32_t>(e));
 
     auto* rel         = reg.try_get<ecs::Relationship>(e);
@@ -97,50 +99,114 @@ bool Runtime::unregisterToolbarItem(const std::string& id)
 
 void Runtime::drawToolbarWindow(bool& visible)
 {
+    const float fs   = ImGui::GetFontSize();
+    const float pad  = std::max(2.f, fs * 0.12f);
+    const float side = fs + pad * 2.f;
+    const float padX = ImGui::GetStyle().WindowPadding.x;
+    const float padY = ImGui::GetStyle().WindowPadding.y;
+    const float narrowW = side + padX * 2.f + 4.f;
+    const float narrowH = side + padY * 2.f + 4.f;
+
+    if (m_toolbarHorizontal) {
+        ImGui::SetNextWindowSizeConstraints(ImVec2(64.f, narrowH),
+                                            ImVec2(FLT_MAX, narrowH + 2.f));
+    } else {
+        ImGui::SetNextWindowSizeConstraints(ImVec2(narrowW, 64.f),
+                                            ImVec2(narrowW + 2.f, FLT_MAX));
+    }
+
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 10, vp->WorkPos.y + 50),
                             ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
 
     ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize
-        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar
-        | ImGuiWindowFlags_NoDocking;
+        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(5, 5));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 2));
 
     if (ImGui::Begin("Toolbar###ofxkit.window.toolbar", &visible, flags)) {
+        const bool floating = (ImGui::GetWindowDockID() == 0);
 
-        ImFonts::ToolbarIconButton(ICON_FA_GRIP_VERTICAL, "##drag", true);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Drag to move toolbar");
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-            ImVec2 d = ImGui::GetIO().MouseDelta;
-            ImVec2 p = ImGui::GetWindowPos();
-            ImGui::SetWindowPos(ImVec2(p.x + d.x, p.y + d.y));
+        bool horizontal = false;
+        if (ImGuiDockNode* dockNode = ImGui::GetWindowDockNode()) {
+            // Wide dock slot → icon row; tall narrow slot → icon column.
+            horizontal = dockNode->Size.x > dockNode->Size.y * 1.15f;
+        } else {
+            const ImVec2 sz = ImGui::GetWindowSize();
+            horizontal      = sz.x > sz.y * 1.25f;
         }
 
-        ImGui::SameLine();
+        m_toolbarHorizontal = horizontal;
 
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.2f, 0.2f, 0.7f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.9f, 0.1f, 0.1f, 1.0f));
-        if (ImFonts::ToolbarIconButton(ICON_FA_TIMES, "##close", true))
-            visible = false;
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Close Toolbar");
-        ImGui::PopStyleColor(2);
+        auto drawGroupSeparator = [&](bool afterFirst) {
+            if (!afterFirst) {
+                return;
+            }
+            if (horizontal) {
+                ImGui::SameLine(0.f, 4.f);
+                ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+                ImGui::SameLine(0.f, 4.f);
+            } else {
+                ImGui::Separator();
+            }
+        };
 
-        ImGui::Separator();
+        if (floating) {
+            const char* gripIcon =
+                horizontal ? ICON_FA_GRIP_HORIZONTAL : ICON_FA_GRIP_VERTICAL;
+            ImFonts::ToolbarIconButton(gripIcon, "##drag", true);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Drag to move (dock to top/bottom for a row, left/right for a "
+                    "column)");
+            }
+            if (ImGui::IsItemActive()
+                && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                ImVec2 d = ImGui::GetIO().MouseDelta;
+                ImVec2 p = ImGui::GetWindowPos();
+                ImGui::SetWindowPos(ImVec2(p.x + d.x, p.y + d.y));
+            }
+
+            ImGui::SameLine(0.f, 4.f);
+
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                  ImVec4(0.7f, 0.2f, 0.2f, 0.7f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                                  ImVec4(0.9f, 0.1f, 0.1f, 1.0f));
+            if (ImFonts::ToolbarIconButton(ICON_FA_TIMES, "##close", true))
+                visible = false;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Close Toolbar");
+            ImGui::PopStyleColor(2);
+
+            if (horizontal) {
+                ImGui::SameLine(0.f, 4.f);
+                ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+                ImGui::SameLine(0.f, 4.f);
+            } else {
+                ImGui::Separator();
+            }
+        }
+
+        // Compact cluster — does not stretch tools across a wide/tall dock host.
+        ImGui::BeginGroup();
 
         const ImVec4 activeCol(0.2f, 0.6f, 0.9f, 1.0f);
-
-        std::string prevGroup = "\x01";
+        std::string  prevGroup = "\x01";
+        bool         firstTool = true;
 
         for (const auto& item : m_toolbarItems) {
-            if (!item.group.empty() && item.group != prevGroup && prevGroup != "\x01")
-                ImGui::Separator();
+            const bool newGroup =
+                !item.group.empty() && item.group != prevGroup
+                && prevGroup != "\x01";
+            if (newGroup)
+                drawGroupSeparator(!firstTool);
             prevGroup = item.group;
+
+            if (horizontal && !firstTool)
+                ImGui::SameLine(0.f, 2.f);
 
             bool active = item.isActive && item.isActive();
             if (active)
@@ -151,7 +217,6 @@ void Runtime::drawToolbarWindow(bool& visible)
             if (item.icon && item.icon[0] != '\0') {
                 clicked = ImFonts::ToolbarIconButton(item.icon, "##tool");
             } else {
-                const float side = ImGui::GetFontSize() + 8.f;
                 clicked = ImGui::Button(item.id.c_str(), ImVec2(side, side));
             }
             ImGui::PopID();
@@ -164,7 +229,11 @@ void Runtime::drawToolbarWindow(bool& visible)
 
             if (clicked && item.onSelect)
                 item.onSelect();
+
+            firstTool = false;
         }
+
+        ImGui::EndGroup();
     }
     ImGui::PopStyleVar(2);
     ImGui::End();
@@ -310,6 +379,13 @@ void Runtime::drawSceneWindow(bool& visible)
     for (auto [e, nc] : reg.view<ecs::node_component>().each())
         if (!reg.all_of<ecs::Relationship>(e))
             drawEntityNode(reg, e);
+
+    for (auto [e, _] : reg.view<ecs::selectable_component>().each()) {
+        if (reg.all_of<ecs::Relationship>(e) || reg.all_of<ecs::node_component>(e))
+            continue;
+        if (!Runtime::instance().entityTreeLabel(reg, e).empty())
+            drawEntityNode(reg, e);
+    }
 
     ImGui::End();
 }

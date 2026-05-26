@@ -1008,7 +1008,15 @@ void Runtime::buildDefaultDockLayout(ImGuiID dockId)
     ImGui::DockBuilderAddNode(dockId, addNodeFlags);
     ImGui::DockBuilderSetNodeSize(dockId, size);
 
-    ImGuiID left, right, centre = dockId;
+    // Thin horizontal tool strip on top; remaining area is Scene / Properties.
+    ImGuiID toolbar = dockId;
+    ImGuiID workArea = dockId;
+    const float toolbarFrac =
+        std::clamp(40.f / std::max(size.y, 1.f), 0.04f, 0.08f);
+    ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Up, toolbarFrac, &toolbar,
+                                &workArea);
+
+    ImGuiID left, right, centre = workArea;
     ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.25f, &left, &centre);
     ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.28f, &right, &centre);
 
@@ -1016,6 +1024,7 @@ void Runtime::buildDefaultDockLayout(ImGuiID dockId)
     if (!m_defaultLayoutExtraBottomDocks.empty())
         ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.28f, &bottom, &centre);
 
+    ImGui::DockBuilderDockWindow("Toolbar###ofxkit.window.toolbar", toolbar);
     ImGui::DockBuilderDockWindow("Scene###ofxkit.window.scene", left);
     for (const auto& name : m_defaultLayoutExtraLeftDocks) {
         if (!name.empty())

@@ -1,4 +1,5 @@
 #include "Runtime.h"
+#include "Runtime_private.h"
 #include "panels/CodeEditorPanel.h"
 #include "panels/PathEditorPanel.h"
 #include "RulerUtil.h"
@@ -9,6 +10,7 @@
 #include "ofxImGuiFileDialog.h"
 
 #include "imgui.h"
+#include <glm/gtc/type_ptr.hpp>
 #include "ofFileUtils.h"
 
 #include <algorithm>
@@ -203,6 +205,41 @@ void Runtime::clearOnEntityInspectorChanged()
     m_onEntityInspectorChanged = nullptr;
 }
 
+void Runtime::setEntityTreeLabelResolver(EntityTreeLabelFn fn)
+{
+    m_entityTreeLabelResolver = std::move(fn);
+}
+
+void Runtime::clearEntityTreeLabelResolver()
+{
+    m_entityTreeLabelResolver = nullptr;
+}
+
+std::string Runtime::entityTreeLabel(entt::registry& reg, entt::entity e) const
+{
+    if (m_entityTreeLabelResolver)
+        return m_entityTreeLabelResolver(reg, e);
+    return {};
+}
+
+void Runtime::pickAtScreen(const ofCamera& cam, glm::vec2 screenPx, const ofRectangle& viewport)
+{
+    if (!m_editMode)
+        return;
+
+    entt::entity hit = entt::null;
+    if (m_sceneViewCaptured && &cam == m_sceneCamera) {
+        hit = ecs::pickSelectableEntity(registry(),
+                                          m_capturedView,
+                                          m_capturedProj,
+                                          screenPx,
+                                          viewport);
+    } else {
+        hit = ecs::pickSelectableEntity(registry(), cam, screenPx, viewport);
+    }
+    select(hit);
+}
+
 void Runtime::drawGizmoOverlay()
 {
     if (!m_sceneCamera)
@@ -299,11 +336,20 @@ void Runtime::drawGizmoInViewport(ViewportInstance& vp, const ofRectangle& imgSc
         1000 + (reinterpret_cast<uintptr_t>(&vp) & 0x0fffffff)));
 
     ImGuizmo::SetAlternativeWindow(ImGui::GetCurrentWindow());
-    ImGuizmo::Manipulate(vp.cam,
-                         nc->node,
-                         toIGOp(m_gizmoOp),
-                         toIGMode(m_gizmoMode),
-                         &imgScreenRect);
+    ImGuizmo::SetRect(imgScreenRect.x,
+                      imgScreenRect.y,
+                      imgScreenRect.width,
+                      imgScreenRect.height);
+    ImGuizmo::SetOrthographic(vp.cam.getOrtho());
+
+    glm::mat4 matrix = nc->node.getGlobalTransformMatrix();
+    if (ImGuizmo::Manipulate(glm::value_ptr(vp.gizmoView),
+                             glm::value_ptr(vp.gizmoProj),
+                             toIGOp(m_gizmoOp),
+                             toIGMode(m_gizmoMode),
+                             glm::value_ptr(matrix))) {
+        ofxImGuizmoDetail::applyWorldTransformMatrix(nc->node, matrix);
+    }
     ImGuizmo::SetAlternativeWindow(nullptr);
 }
 
@@ -551,12 +597,16 @@ void Runtime::drawViewportWindow(ViewportInstance& vp, bool& visible)
     ofClear(18, 18, 24, 255);
     ofEnableDepthTest();
     updateViewportCamera(vp);
-    vp.cam.begin(ofRectangle(
-        0,
-        0,
+    const ofRectangle fboVp(
+        0.f,
+        0.f,
         static_cast<float>(vp.fbo.getWidth()),
-        static_cast<float>(vp.fbo.getHeight())));
+        static_cast<float>(vp.fbo.getHeight()));
+    vp.cam.begin(fboVp);
     m_viewportRenderer();
+    // Match the matrices actually used to draw the FBO (includes renderer orientation).
+    vp.gizmoView = ofGetCurrentMatrix(OF_MATRIX_MODELVIEW);
+    vp.gizmoProj = ofGetCurrentMatrix(OF_MATRIX_PROJECTION);
     vp.cam.end();
     ofDisableDepthTest();
     vp.fbo.end();
@@ -594,6 +644,15 @@ void Runtime::drawViewportWindow(ViewportInstance& vp, bool& visible)
     const ImVec2 p1 = {imgPosScreen.x + avail.x, imgPosScreen.y + avail.y};
     const bool vpHovered = ImGui::IsMouseHoveringRect(imgPosScreen, p1);
 
+    if (m_editMode && vpHovered && !gizmoWantsInput && detail::isClickWithoutDrag()) {
+        const ImGuiIO& io = ImGui::GetIO();
+        const float    lx = io.MousePos.x - imgPosScreen.x;
+        const float    ly = avail.y - (io.MousePos.y - imgPosScreen.y);
+        pickAtScreen(vp.cam,
+                     {lx, ly},
+                     ofRectangle(0.f, 0.f, avail.x, avail.y));
+    }
+
     if (vpHovered && !gizmoWantsInput) {
         ImGuiIO& io = ImGui::GetIO();
 
@@ -626,7 +685,11 @@ void Runtime::drawViewportWindow(ViewportInstance& vp, bool& visible)
 void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
 {
     ImGui::SetNextWindowSize(ImVec2(600, 480), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin(vp.title.c_str(), &visible, ImGuiWindowFlags_MenuBar)) {
+    const ImGuiWindowFlags winFlags =
+        ImGuiWindowFlags_MenuBar
+        | ImGuiWindowFlags_NoScrollbar
+        | ImGuiWindowFlags_NoScrollWithMouse;
+    if (!ImGui::Begin(vp.title.c_str(), &visible, winFlags)) {
         ImGui::End();
         return;
     }
@@ -670,11 +733,14 @@ void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
     const float  canvasW = std::max(4.f, fullAvail.x - RS_px);
     const float  canvasH = std::max(4.f, fullAvail.y - RS_px);
 
-    // Invisible hit region for hover / drag detection.
+    // Ortho2D canvas is fixed-size in layout — clear any stale scroll offset.
+    ImGui::SetScrollX(0.f);
+    ImGui::SetScrollY(0.f);
+
+    // Invisible hit region for hover / drag detection (also reserves layout height).
     ImGui::SetCursorScreenPos(canvasOrigin);
     ImGui::InvisibleButton("canvas2d", ImVec2(canvasW, canvasH));
     const bool canvasHovered = ImGui::IsItemHovered();
-    ImGui::SetCursorScreenPos(windowOrigin);
 
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -690,12 +756,16 @@ void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
         const float pyOld   = canvasH * 0.5f + vp.pan2D.y - vp.contentSize.y * zoomOld * 0.5f;
         const float mu      = (io.MousePos.x - canvasOrigin.x - pxOld) / zoomOld;
         const float mv      = (io.MousePos.y - canvasOrigin.y - pyOld) / zoomOld;
-        vp.zoom2D          *= factor;
+        vp.zoom2D           = std::clamp(vp.zoom2D * factor, 0.1f, 50.f);
         const float zoomNew = fitZoom * vp.zoom2D;
         vp.pan2D.x = io.MousePos.x - canvasOrigin.x - mu * zoomNew
                      - canvasW * 0.5f + vp.contentSize.x * zoomNew * 0.5f;
         vp.pan2D.y = io.MousePos.y - canvasOrigin.y - mv * zoomNew
                      - canvasH * 0.5f + vp.contentSize.y * zoomNew * 0.5f;
+        // Wheel zoom owns the canvas — do not scroll the window or parent dock.
+        ImGuiIO& ioMut = ImGui::GetIO();
+        ioMut.MouseWheel  = 0.f;
+        ioMut.MouseWheelH = 0.f;
     }
 
     // ---- Middle-mouse / Alt+LMB pan ----------------------------------------
@@ -736,8 +806,11 @@ void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
     }
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->PushClipRect(canvasOrigin,
-                     ImVec2(canvasOrigin.x + canvasW, canvasOrigin.y + canvasH), true);
+    const ImVec2 canvasMax(canvasOrigin.x + canvasW, canvasOrigin.y + canvasH);
+    dl->PushClipRect(canvasOrigin, canvasMax, true);
+
+    // Fill the entire canvas viewport (letterbox bands when aspect ratio differs).
+    dl->AddRectFilled(canvasOrigin, canvasMax, IM_COL32(18, 18, 24, 255));
 
     // ---- Allocate FBO (fixed content-space size, independent of panel size) --
     // fboScale px/mm may increase with zoom (see above); pan only affects blit.
@@ -779,22 +852,25 @@ void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
     }
 
     // ---- Blit FBO — pan/zoom applied here via position + size --------------
-    // The image is placed at (ox,oy) and sized to contentSize*zoom in screen px.
-    // PushClipRect (above) clips anything outside the canvas area.
+    // DrawList blit avoids ImGui::Image expanding the window scroll extent when
+    // zoomed in (which previously turned the wheel into vertical scrolling).
     const auto& tex = vp.fbo.getTexture();
     if (tex.getTextureData().textureTarget == GL_TEXTURE_2D) {
         vp.fbo.getTexture().setTextureMinMagFilter(GL_LINEAR, GL_NEAREST);
-        ImGui::SetCursorScreenPos(ImVec2(ox, oy));
-        ImGui::Image(GetImTextureID(tex),
-                     ImVec2(vp.contentSize.x * zoom, vp.contentSize.y * zoom),
-                     ImVec2(0, 1), ImVec2(1, 0));
+        const ImVec2 imgMin(ox, oy);
+        const ImVec2 imgMax(ox + vp.contentSize.x * zoom, oy + vp.contentSize.y * zoom);
+        dl->AddImage(GetImTextureID(tex), imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0));
     }
 
     // ---- Grid / guides overlay (ImDrawList, every frame, O(visible lines)) -
-    if (vp.gridGuides)
-        vp.gridGuides->draw(dl, vp.contentSize.x, vp.contentSize.y,
-                            ox, oy, zoom,
+    if (vp.gridGuides) {
+        const float gridW = vp.gridGuides->paperW > 0.f
+            ? vp.gridGuides->paperW : vp.contentSize.x;
+        const float gridH = vp.gridGuides->paperH > 0.f
+            ? vp.gridGuides->paperH : vp.contentSize.y;
+        vp.gridGuides->draw(dl, gridW, gridH, ox, oy, zoom,
                             canvasOrigin.x, canvasOrigin.y, canvasW, canvasH);
+    }
 
     // ---- App overlays (toScreen() / toContent() are now valid) -------------
     if (vp.overlayDraw)
