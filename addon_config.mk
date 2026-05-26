@@ -2,6 +2,7 @@ meta:
 	ADDON_NAME = ofxKit
 	ADDON_DESCRIPTION = ofKitty runtime
 	ADDON_AUTHOR = ofKitty
+	ADDON_DESCRIPTION = ofKitty runtime kit — composition-first Edit Mode overlay.
 	ADDON_TAGS = "addon" "ecs" "inspector" "editor" "ofkitty" "ofxkit"
 	ADDON_URL = https://github.com/ofkitty/ofxKit
 
