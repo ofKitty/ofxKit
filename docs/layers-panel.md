@@ -192,6 +192,9 @@ if (r.accepted) {
 `ImGui::GetCursorScreenPos().y` before the item and adding
 `ImGui::GetFrameHeight()`.
 
+For **flat index lists** (pipeline steps, effect chains, SendFx slots), use
+`ReorderDragDropIndexRow` via [`ChainEditor`](chain-editor.md) instead.
+
 ---
 
 ## `ImageToPath` — layer management API

@@ -20,9 +20,9 @@ env:
   OF_REPO: ofKitty/openFrameworks
   OF_BRANCH: ofKitty
   OFXKIT_REPO: ofKitty/ofxKit
-  # Prebuilt libs from https://github.com/ofKitty/apothecary/releases
-  APOTHECARY_REPO: ofKitty/apothecary
-  OF_RELEASE: bleeding
+  APOTHECARY_USE_ORG: "1"
+  APOTHECARY_ORG: ofKitty
+  OF_RELEASE: latest
 
 # ---------------------------------------------------------------------------
 # Addon dependency repos (all under github.com/ofxyz or github.com/ofKitty).
@@ -69,11 +69,6 @@ jobs:
           repository: ${{ env.OF_REPO }}
           ref: ${{ env.OF_BRANCH }}
           path: openFrameworks
-
-      - name: Use ofKitty apothecary releases
-        run: |
-          sed -i "s|github.com/openframeworks/apothecary|github.com/${{ env.APOTHECARY_REPO }}|g" \
-            "$OF_ROOT/scripts/dev/download_libs.sh"
 
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2.17
@@ -186,11 +181,6 @@ jobs:
           repository: ${{ env.OF_REPO }}
           ref: ${{ env.OF_BRANCH }}
           path: openFrameworks
-
-      - name: Use ofKitty apothecary releases
-        run: |
-          sed -i "s|github.com/openframeworks/apothecary|github.com/${{ env.APOTHECARY_REPO }}|g" \
-            openFrameworks/scripts/dev/download_libs.sh
 
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2.17

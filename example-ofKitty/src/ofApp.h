@@ -24,6 +24,7 @@ public:
 private:
     entt::registry     m_registry;
     ofEasyCam          m_cam;
+    ofkitty::ResourcesPanel m_resources;
     float              m_time    = 0.f;
     bool               m_showGrid = true;
     bool               m_showAxes = true;

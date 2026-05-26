@@ -325,6 +325,7 @@ Gizmo modes are also under **Edit** in the menu bar (Edit mode only). Enabling t
 | [`docs/component-registry.md`](docs/component-registry.md)   | ComponentRegistry API, addon registration, picker   |
 | [`docs/scene-window.md`](docs/scene-window.md)               | Scene hierarchy tree, ofxNode traversal, selection  |
 | [`docs/layers-panel.md`](docs/layers-panel.md)               | LayersPanel tree, ReorderDragDrop, LayerSystem      |
+| [`docs/chain-editor.md`](docs/chain-editor.md)               | ChainEditor — re-orderable step lists (FX, pipeline)  |
 | [`docs/status-bar.md`](docs/status-bar.md)                   | Status bar layout and implementation notes          |
 | [`docs/preferences.md`](docs/preferences.md)                 | App Preferences window — all OF settings            |
 | [`docs/appearance.md`](docs/appearance.md)                   | Theme/font integration with `ofxImGuiStyle` (`ImTheme` / `ImFonts`) |

@@ -1,6 +1,7 @@
 #include "LayersPanel.h"
-#include "../ReorderDragDrop.h"
-
+#include "components/base_components.h"
+#include "ReorderDragDrop.h"
+#include "Runtime.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "ImFonts.h"
@@ -10,6 +11,17 @@
 #include <cstring>
 #include <vector>
 #include <functional>
+
+namespace {
+
+void activateLayer(entt::registry& reg, entt::entity* activeLayer, entt::entity e)
+{
+    if (!activeLayer || !reg.valid(e)) return;
+    *activeLayer = e;
+    ofkitty::runtime().select(e);
+}
+
+} // namespace
 
 namespace ofkitty {
 
@@ -183,7 +195,9 @@ void LayersPanel::drawLayerRow(entt::entity e, int depth, float totalW,
 
     const ImVec2 rowScreenPos = ImGui::GetCursorScreenPos();
     const float  rowH         = ImGui::GetFrameHeight();
-    const bool   selected     = (e == *activeLayer_);
+    const entt::entity runtimeSel = ofkitty::runtime().selected();
+    const bool         selected    = (e == runtimeSel)
+        || (runtimeSel == entt::null && e == *activeLayer_);
 
     // Selection highlight
     if (selected) {
@@ -281,7 +295,7 @@ void LayersPanel::drawLayerRow(entt::entity e, int depth, float totalW,
             std::strncpy(renameBuf_, lc.name.c_str(), sizeof(renameBuf_) - 1);
             renameBuf_[sizeof(renameBuf_) - 1] = '\0';
         } else {
-            *activeLayer_ = e;
+            activateLayer(reg, activeLayer_, e);
         }
     }
     if (ImGui::IsItemHovered())
@@ -387,6 +401,11 @@ void LayersPanel::draw(const char* imguiTitle, bool& visible)
 
     auto& reg = *reg_;
 
+    entt::entity runtimeSel = runtime().selected();
+    if (runtimeSel != entt::null && reg.valid(runtimeSel)
+        && reg.all_of<ecs::layer_component>(runtimeSel))
+        *activeLayer_ = runtimeSel;
+
     // ---- Toolbar -----------------------------------------------------------
     const size_t totalLayers = reg.storage<ecs::layer_component>().size();
     const bool   canRemove   = totalLayers > 1;
@@ -416,8 +435,9 @@ void LayersPanel::draw(const char* imguiTitle, bool& visible)
             reg.emplace<ecs::layer_component>(e, lc);
             if (!reg.all_of<ecs::Relationship>(e))
                 reg.emplace<ecs::Relationship>(e);
+            reg.emplace<ecs::selectable_component>(e, false);
             rel_linkChild(reg, entt::null, e);
-            *activeLayer_ = e;
+            activateLayer(reg, activeLayer_, e);
         }
         if (onChanged_) onChanged_();
     }

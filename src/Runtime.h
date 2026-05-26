@@ -2,6 +2,7 @@
 
 #include "ofMain.h"
 #include "RulerUtil.h"
+#include "ImGridGuides.h"
 #include "ShortcutManager.h"
 #include "ofxImGui.h"
 #include "GuiEventHelper.h"
@@ -195,10 +196,10 @@ public:
         int         audioSampleRate    {44100};
         int         audioBufferSize    {512};
 
-        // Margin overlay and MIDI port routing used to live here. They are now
-        // owned by their respective addons (see addons/ofxMidiKit/src/ofxMidiKit.h
-        // and any ofxRulerKit / ofxPlotter consumer). Addons that want their
-        // fields persisted into appPrefs.json should call
+        // MIDI port routing lives in ofxMidiKit (ofxKit/midiPrefs.json) — named
+        // input/output slots, unlimited count. See ofxMidiKit.h.
+        // Margin overlay prefs similarly live in their owning addons.
+        // Addons that want fields in appPrefs.json should call
         // Runtime::registerPrefSerializer(...).
     };
 
@@ -291,7 +292,18 @@ public:
 
         // Optional guide set — pass a pointer so the ruler strip creates and
         // moves draggable guides.  nullptr = no guides.
-        GuideSet*   guides = nullptr;
+        GuideSet*      guides     = nullptr;
+
+        // Optional grid/margin/snap-guide overlay (ImDrawList, drawn every frame).
+        // Set to a local ImGridGuides instance; nullptr = no grid overlay.
+        ImGridGuides*  gridGuides = nullptr;
+
+        // ---- FBO caching ----------------------------------------------------
+        // Set dirty = true whenever rendered content changes (paths, toggles, etc.)
+        // Pan and zoom changes never require a re-render — they only affect the
+        // ImGui::Image blit position and size.
+        bool  dirty    = true;   ///< force FBO re-render on next frame
+        float fboScale = 2.f;    ///< px per content unit (mm) — quality vs memory
 
         // Ortho2D renderer callbacks:
         //
@@ -331,7 +343,7 @@ public:
         // ---- Internal (managed by Runtime — do not modify) -----------------
         ofFbo     fbo;
         ofCamera  cam;
-        glm::vec2 lastPanelSize = {};
+        glm::vec2 lastPanelSize = {};  // used by the 3D orbit path to detect panel resize
         float _ox = 0.f, _oy = 0.f, _zoom = 1.f;
         float _canvasOx = 0.f, _canvasOy = 0.f;
         float _canvasW  = 0.f, _canvasH  = 0.f;
@@ -396,13 +408,17 @@ public:
     // -------------------------------------------------------------------------
     // Selection
     // -------------------------------------------------------------------------
-    entt::entity selected() const       { return m_selected; }
-    void         select(entt::entity e) { m_selected = e; }
+    entt::entity selected() const;
+    void         select(entt::entity e);
 
     /// Optional extra content drawn at the top of the Properties panel (e.g.
     /// plotter zones / pen when no ECS entity is selected).
     void setPropertiesSupplement(std::function<void()> draw);
     void clearPropertiesSupplement();
+
+    /// Called when `inspectEntity()` reports a change for the selected entity.
+    void setOnEntityInspectorChanged(std::function<void(entt::entity)> cb);
+    void clearOnEntityInspectorChanged();
 
     // -------------------------------------------------------------------------
     // UI identity
@@ -649,6 +665,10 @@ public:
     /// the tab bar / title bar is visible. Call after registerWindow().
     void addDefaultLayoutCenterDock(std::string imguiWindowTitle);
 
+    /// Dock a window into a bottom split below the central area. Call after
+    /// registerWindow().
+    void addDefaultLayoutBottomDock(std::string imguiWindowTitle);
+
     // -------------------------------------------------------------------------
     // Preference pages — two-pane category/page Preferences window
     // -------------------------------------------------------------------------
@@ -845,6 +865,7 @@ private:
     std::vector<std::string>   m_defaultLayoutExtraLeftDocks;
     std::vector<std::string>   m_defaultLayoutExtraRightDocks;
     std::vector<std::string>   m_defaultLayoutExtraCenterDocks;
+    std::vector<std::string>   m_defaultLayoutExtraBottomDocks;
     // Visibility states loaded from disk before windows are registered.
     // registerWindow() applies the saved state so addon windows also restore.
     std::unordered_map<std::string, bool> m_savedWindowVisibility;
@@ -894,6 +915,7 @@ private:
     bool             m_builtInStatusItemsRegistered {false};
 
     std::function<void()> m_propertiesSupplement;
+    std::function<void(entt::entity)> m_onEntityInspectorChanged;
 
     // Viewport panels — one entry per addViewportWindow() call.
     // Stored as unique_ptr so the heap address is stable even if the vector

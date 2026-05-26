@@ -2,7 +2,7 @@
 #include "Runtime_private.h"
 
 #include "component_editor_registration.h"
-#include "ofxEnTTKit.h"
+#include "ofxEnTTKit_all.h"
 #include "ofxEnTTInspector.h"
 #include "IconsFontAwesome5.h"
 #include "ImFonts.h"
@@ -15,10 +15,12 @@ namespace ofkitty {
 
 namespace {
 
-void drawEntityNode(entt::registry& reg, entt::entity e, entt::entity& selected)
+void drawEntityNode(entt::registry& reg, entt::entity e)
 {
     if (!reg.valid(e))
         return;
+
+    const entt::entity selected = Runtime::instance().selected();
 
     std::string name;
     if (reg.all_of<ecs::Relationship, ecs::LocalTransform, ecs::GlobalTransform>(e))
@@ -44,18 +46,18 @@ void drawEntityNode(entt::registry& reg, entt::entity e, entt::entity& selected)
     bool open = ImGui::TreeNodeEx(name.c_str(), flags);
 
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
-        selected = e;
+        Runtime::instance().select(e);
 
     if (open && hasChildren) {
         if (reg.all_of<ecs::Relationship, ecs::LocalTransform, ecs::GlobalTransform>(e)) {
             ofxNode node = ofxNode::fromEntity(reg, e);
             node.forEachChild([&](ofxNode child) {
-                drawEntityNode(reg, child.entity(), selected);
+                drawEntityNode(reg, child.entity());
             });
         } else {
             entt::entity child = rel->first_child;
             while (child != entt::null) {
-                drawEntityNode(reg, child, selected);
+                drawEntityNode(reg, child);
                 auto* cr = reg.try_get<ecs::Relationship>(child);
                 child = cr ? cr->next_sibling : entt::null;
             }
@@ -303,11 +305,11 @@ void Runtime::drawSceneWindow(bool& visible)
 
     for (auto [e, rel] : reg.view<ecs::Relationship>().each())
         if (rel.parent == entt::null)
-            drawEntityNode(reg, e, m_selected);
+            drawEntityNode(reg, e);
 
     for (auto [e, nc] : reg.view<ecs::node_component>().each())
         if (!reg.all_of<ecs::Relationship>(e))
-            drawEntityNode(reg, e, m_selected);
+            drawEntityNode(reg, e);
 
     ImGui::End();
 }
@@ -315,9 +317,6 @@ void Runtime::drawSceneWindow(bool& visible)
 void Runtime::drawPropertiesWindow(bool& visible)
 {
     auto& reg = registry();
-
-    ImGui::SetNextWindowPos(ImVec2(320, 40), ImGuiCond_Once);
-    ImGui::SetNextWindowSize(ImVec2(360, 500), ImGuiCond_Once);
 
     if (ImGui::Begin("Properties###ofxkit.window.properties", &visible)) {
         const bool hasEntity =
@@ -333,7 +332,10 @@ void Runtime::drawPropertiesWindow(bool& visible)
         }
 
         if (hasEntity) {
-            inspector::inspectEntity(reg, m_selected);
+            if (inspector::inspectEntity(reg, m_selected)) {
+                if (m_onEntityInspectorChanged)
+                    m_onEntityInspectorChanged(m_selected);
+            }
 
             ImGui::Spacing();
             ImGui::Separator();

@@ -17,8 +17,8 @@
 
 // Expose the full ofxEnTTKit component library (ecs:: types, ofxNode, …)
 // so that any file that does #include "ofxKit.h" can use ECS components
-// directly without needing a separate #include "ofxEnTTKit.h".
-#include "ofxEnTTKit.h"
+// directly without needing a separate #include "ofxEnTTKit_all.h".
+#include "ofxEnTTKit_all.h"
 
 // GuiEventHelper registers event filters at OF_EVENT_ORDER_BEFORE_APP that
 // block OF mouse/keyboard events from reaching the app when ImGui has claimed
@@ -37,3 +37,10 @@
 
 // Generic drag-and-drop reorder / reparent helper (3-zone: Before / Into / After)
 #include "ReorderDragDrop.h"
+
+// Re-orderable step chains (effects, pipeline, SendFx, …)
+#include "ChainEditor.h"
+#include "EmbeddedCodeEditor.h"
+
+// ECS system for 2D bounding-box transform handles (requires ImGui + ofxEnTTKit)
+#include "TransformHandle2DSystem.h"

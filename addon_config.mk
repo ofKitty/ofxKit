@@ -1,7 +1,7 @@
 meta:
 	ADDON_NAME = ofxKit
-	ADDON_DESCRIPTION = ofKitty runtime kit — composition-first Edit mode overlay for any ofBaseApp sketch.
-	ADDON_AUTHOR = @gitbruno
+	ADDON_DESCRIPTION = ofKitty runtime
+	ADDON_AUTHOR = ofKitty
 	ADDON_TAGS = "addon" "ecs" "inspector" "editor" "ofkitty" "ofxkit"
 	ADDON_URL = https://github.com/ofkitty/ofxKit
 
@@ -20,7 +20,6 @@ ios:
 tvos:
 emscripten:
 	# ofxKit is Emscripten-compatible without additional flags.
-	# ofxImGuiConstants.h auto-detects __EMSCRIPTEN__ → GLES3 + GLFW backend.
 	# ImGui multi-viewports are automatically disabled under TARGET_OPENGLES.
 	# GLFW is available in Emscripten (emscripten-glfw3 layer).
 	# File I/O uses Emscripten's virtual FS; add IDBFS mounting in main.cpp

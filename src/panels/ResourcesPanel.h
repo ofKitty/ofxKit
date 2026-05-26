@@ -1,103 +1,143 @@
 #pragma once
 
+
+
 #include "ofMain.h"
+
+#include <entt.hpp>
+
 #include <functional>
+
 #include <string>
+
 #include <vector>
+
+
 
 namespace ofkitty {
 
-// =============================================================================
-// ResourceType — file categories handled by the Resources panel.
-// =============================================================================
+
+
 enum class ResourceType {
-    Image,         ///< raster image (png, jpg, bmp, tga, …)
-    VectorSVG,     ///< SVG vector file
-    GCodeSnippet,  ///< G-code text file (ngc, gcode, txt, …)
+
+    Image,
+
+    VectorSVG,
+
+    GCodeSnippet,
+
+    GeneratedGCode,
+
 };
 
-// =============================================================================
-// Resource — one entry in the panel.
-// =============================================================================
-struct Resource {
-    ResourceType type;
-    std::string  path;          ///< absolute path on disk
-    std::string  name;          ///< filename only, for display
-    bool         loaded {false}; ///< true after the file was successfully read
 
-    // Image type: small thumbnail for visual preview.
+
+struct Resource {
+
+    ResourceType type;
+
+    std::string  path;
+
+    std::string  name;
+
+    bool         loaded {false};
+
+    entt::entity entity {entt::null};
+
     ofImage      thumbnail;
 
-    // GCodeSnippet type: the text content loaded from the file.
     std::string  text;
+
 };
 
-// =============================================================================
-// ResourcesPanel
-// =============================================================================
-// A standalone ImGui panel that manages a list of file-based resources
-// (images, SVGs, G-code snippets).  Apps instantiate one, call
-// setOnPlace(), register a window with the ofxKit runtime, and the
-// panel handles all file-picking and list rendering internally.
-//
-// Minimal setup in ofApp::setup():
-//
-//   m_resources.setOnPlace([this](const ofkitty::Resource& r) {
-//       if (r.type == ofkitty::ResourceType::VectorSVG)
-//           m_engine.loadVectorSVG(r.path);
-//       else if (r.type == ofkitty::ResourceType::Image)
-//           m_engine.loadImage(r.path);
-//   });
-//   ofkitty::runtime().registerWindow({
-//       "Resources", "View", true, true,
-//       [this](bool& v){ m_resources.draw("Resources###myapp.resources", v); }
-//   });
-// =============================================================================
-class ResourcesPanel {
-public:
-    // -------------------------------------------------------------------------
-    // Callbacks
-    // -------------------------------------------------------------------------
 
-    /// Called when the user double-clicks or presses the "Place" button.
+
+class ResourcesPanel {
+
+public:
+
     void setOnPlace(std::function<void(const Resource&)> cb);
 
-    /// Called after a resource file is loaded into the panel list.
     void setOnResourceLoaded(std::function<void(Resource&)> cb);
 
-    // -------------------------------------------------------------------------
-    // Resource management
-    // -------------------------------------------------------------------------
+    void setOnResourceEntityChanged(std::function<void(entt::entity)> cb);
 
-    /// Add a resource programmatically (e.g. a default snippet bundled with
-    /// the app). For file-backed resources the panel auto-loads on add.
+
+
     void addResource(Resource r);
+
+
+
+    /// Upsert the single generated-job slot (pipeline output).
+
+    entt::entity addOrUpdateGeneratedJob(const std::string& text,
+
+                                         const std::string& suggestedName = "Generated.gcode");
+
+
 
     const std::vector<Resource>& resources() const { return m_resources; }
 
-    // -------------------------------------------------------------------------
-    // Draw — call this inside a registered RuntimeWindow callback.
-    // -------------------------------------------------------------------------
+    int selectedIndex() const { return m_selected; }
+
+    /// Copy `code_snippet_component.text` from @p entity into the matching Resource row.
+    void syncTextFromEntity(entt::entity entity);
+
     void draw(const char* title, bool& visible);
 
+
+
 private:
-    // ---- internal file loading helpers ----
+
     void loadImage(const std::string& path);
+
     void loadSVG(const std::string& path);
+
     void loadGCode(const std::string& path);
 
-    // ---- drawing helpers ----
+
+
+    entt::entity createResourceEntity(Resource& r);
+
+    void         updateResourceEntity(Resource& r);
+
+    void         destroyResourceEntity(entt::entity e);
+
+    void         selectResourceIndex(int index);
+
+    void         saveSelected(bool saveAs);
+
+    std::string  snippetTextFromEntity(const Resource& r) const;
+
+
+
     void drawMenuBar();
+
     void drawList();
+
     void placeSelected();
 
+
+
     std::vector<Resource>                  m_resources;
+
     std::function<void(const Resource&)>   m_onPlace;
+
     std::function<void(Resource&)>         m_onResourceLoaded;
+
+    std::function<void(entt::entity)>      m_onResourceEntityChanged;
+
     int                                    m_selected    {-1};
 
-    // Thumbnail texture size drawn in the list.
+    int                                    m_generatedIdx {-1};
+
+
+
     static constexpr float kThumbSize = 48.f;
+
 };
 
+
+
 } // namespace ofkitty
+

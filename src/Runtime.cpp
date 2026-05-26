@@ -4,6 +4,7 @@
 #include "ProgressWindow.h"
 #include "Runtime_private.h"
 
+#include "ofxEnTTKit_all.h"
 #include "ofJson.h"
 #include "imgui_internal.h"   // DockBuilder API
 
@@ -59,6 +60,24 @@ void Runtime::attachInternal(shared_ptr<ofAppBaseWindow> /*window*/,
     ofAddListener(ofEvents().keyPressed, this, &Runtime::onShortcutCaptureBeforeApp,
                   OF_EVENT_ORDER_BEFORE_APP);
     ofAddListener(ofEvents().keyPressed, this, &Runtime::onKeyPressed, OF_EVENT_ORDER_AFTER_APP);
+}
+
+// ============================================================================
+// Selection
+// ============================================================================
+
+entt::entity Runtime::selected() const
+{
+    return m_selected;
+}
+
+void Runtime::select(entt::entity e)
+{
+    if (e != entt::null && !registry().valid(e))
+        e = entt::null;
+
+    m_selected = e;
+    ecs::selectEntity(registry(), e);
 }
 
 // ============================================================================
@@ -652,6 +671,17 @@ void Runtime::addDefaultLayoutCenterDock(std::string imguiWindowTitle)
             return;
     }
     m_defaultLayoutExtraCenterDocks.push_back(std::move(imguiWindowTitle));
+}
+
+void Runtime::addDefaultLayoutBottomDock(std::string imguiWindowTitle)
+{
+    if (imguiWindowTitle.empty())
+        return;
+    for (const auto& existing : m_defaultLayoutExtraBottomDocks) {
+        if (existing == imguiWindowTitle)
+            return;
+    }
+    m_defaultLayoutExtraBottomDocks.push_back(std::move(imguiWindowTitle));
 }
 
 void Runtime::addMenuBarGroup(const std::string& groupName, MenuBarCallback cb)

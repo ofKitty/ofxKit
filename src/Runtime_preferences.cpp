@@ -1012,6 +1012,10 @@ void Runtime::buildDefaultDockLayout(ImGuiID dockId)
     ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.25f, &left, &centre);
     ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.28f, &right, &centre);
 
+    ImGuiID bottom = centre;
+    if (!m_defaultLayoutExtraBottomDocks.empty())
+        ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.28f, &bottom, &centre);
+
     ImGui::DockBuilderDockWindow("Scene###ofxkit.window.scene", left);
     for (const auto& name : m_defaultLayoutExtraLeftDocks) {
         if (!name.empty())
@@ -1027,6 +1031,10 @@ void Runtime::buildDefaultDockLayout(ImGuiID dockId)
     for (const auto& name : m_defaultLayoutExtraCenterDocks) {
         if (!name.empty())
             ImGui::DockBuilderDockWindow(name.c_str(), centre);
+    }
+    for (const auto& name : m_defaultLayoutExtraBottomDocks) {
+        if (!name.empty())
+            ImGui::DockBuilderDockWindow(name.c_str(), bottom);
     }
 
     ImGui::DockBuilderFinish(dockId);

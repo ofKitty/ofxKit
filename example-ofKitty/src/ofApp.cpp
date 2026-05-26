@@ -13,6 +13,7 @@ void ofApp::setup() {
 
     // Enable the full built-in panel set (Toolbar, Scene, Properties, …)
     runtime().enableAllBuiltInWindows();
+    runtime().setDataSubdir("ofKitty");
 
     m_cam.setDistance(550.f);
     m_cam.setNearClip(1.f);
@@ -81,6 +82,16 @@ void ofApp::setup() {
     // Add a default Scene View panel (auto-named "Scene View").
     // Open more via View > New Scene View, or call addViewportWindow() again.
     runtime().addViewportWindow();
+
+    // Resources panel — selecting an image shows its preview in Properties.
+    runtime().registerWindow({
+        "Resources", "View", true, true,
+        [this](bool& visible) {
+            m_resources.draw("Resources###ofkitty.resources", visible);
+        },
+    });
+    runtime().addDefaultLayoutLeftDock("Resources###ofkitty.resources");
+    runtime().addDefaultLayoutRightDock("Properties###ofxkit.window.properties");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +119,7 @@ void ofApp::addMeshEntity(ecs::eMeshPrimitiveType type,
     }
     mesh.rebuild();
     m_registry.emplace<ecs::render_component>(e).visible = true;
+    m_registry.emplace<ecs::selectable_component>(e, false);
 
     // Auto-select first entity so the Properties panel is populated on launch.
     if (runtime().selected() == entt::null) runtime().select(e);

@@ -46,10 +46,24 @@ struct ReorderDropResult {
 /// @param previewLabel Text shown in the drag tooltip
 /// @param rowMinY      Screen Y of the row top    (ImGui::GetItemRectMin().y)
 /// @param rowMaxY      Screen Y of the row bottom (ImGui::GetItemRectMax().y)
+/// Index-based reorder (flat lists: pipeline steps, effect chains).
+struct IndexDropResult {
+    bool accepted = false;
+    int  dragged  = -1;
+    int  target   = -1;
+    DropZone zone = DropZone::Before;
+};
+
 ReorderDropResult ReorderDragDropRow(const char*  payloadTag,
                                      entt::entity entity,
                                      const char*  previewLabel,
                                      float        rowMinY,
                                      float        rowMaxY);
+
+IndexDropResult ReorderDragDropIndexRow(const char* payloadTag,
+                                        int         index,
+                                        const char* previewLabel,
+                                        float       rowMinY,
+                                        float       rowMaxY);
 
 } // namespace ofkitty

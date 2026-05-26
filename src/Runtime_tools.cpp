@@ -3,7 +3,7 @@
 #include "panels/PathEditorPanel.h"
 #include "RulerUtil.h"
 
-#include "ofxEnTTKit.h"
+#include "ofxEnTTKit_all.h"
 #include "ofxImGui.h"
 
 #include "ofxImGuiFileDialog.h"
@@ -191,6 +191,16 @@ void Runtime::setPropertiesSupplement(std::function<void()> draw)
 void Runtime::clearPropertiesSupplement()
 {
     m_propertiesSupplement = nullptr;
+}
+
+void Runtime::setOnEntityInspectorChanged(std::function<void(entt::entity)> cb)
+{
+    m_onEntityInspectorChanged = std::move(cb);
+}
+
+void Runtime::clearOnEntityInspectorChanged()
+{
+    m_onEntityInspectorChanged = nullptr;
 }
 
 void Runtime::drawGizmoOverlay()
@@ -714,51 +724,77 @@ void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
     vp._canvasW  = canvasW;         vp._canvasH  = canvasH;
     vp._canvasHovered = canvasHovered;
 
+    // Match FBO pixel density to screen zoom so raster overlays (SVG, images)
+    // stay sharp when magnified.  Quantised to whole px/mm steps — pan is
+    // unchanged, only zoom wheel crossing a step triggers a re-render.
+    {
+        const float desired = std::clamp(std::round(zoom * 2.f), 2.f, 8.f);
+        if (std::fabs(desired - vp.fboScale) >= 1.f) {
+            vp.fboScale = desired;
+            vp.dirty    = true;
+        }
+    }
+
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->PushClipRect(canvasOrigin,
                      ImVec2(canvasOrigin.x + canvasW, canvasOrigin.y + canvasH), true);
 
-    // ---- Allocate / resize FBO ---------------------------------------------
+    // ---- Allocate FBO (fixed content-space size, independent of panel size) --
+    // fboScale px/mm may increase with zoom (see above); pan only affects blit.
+    const int targetFboW = std::max(1, (int)std::round(vp.contentSize.x * vp.fboScale));
+    const int targetFboH = std::max(1, (int)std::round(vp.contentSize.y * vp.fboScale));
     const bool needsAlloc = !vp.fbo.isAllocated()
-        || std::fabs(vp.lastPanelSize.x - canvasW) > 0.5f
-        || std::fabs(vp.lastPanelSize.y - canvasH) > 0.5f;
+        || vp.fbo.getWidth()  != targetFboW
+        || vp.fbo.getHeight() != targetFboH;
     if (needsAlloc) {
         ofDisableArbTex();
         ofFboSettings s;
-        s.width          = static_cast<int>(canvasW);
-        s.height         = static_cast<int>(canvasH);
+        s.width          = targetFboW;
+        s.height         = targetFboH;
         s.internalformat = GL_RGBA;
         s.useDepth       = false;
+        s.minFilter      = GL_LINEAR;
+        s.maxFilter      = GL_NEAREST;   // sharp pixels when zoomed in
         vp.fbo.allocate(s);
         ofEnableArbTex();
-        vp.lastPanelSize = { canvasW, canvasH };
+        vp.dirty = true;  // always re-render after reallocation
     }
 
-    // ---- Render content into FBO -------------------------------------------
+    // ---- Render content into FBO (only when dirty) -------------------------
     // ofSetupScreenOrtho is Y-UP; we immediately flip to Y-DOWN so that the
-    // renderer2D callback works in the same coordinate space as screen/ImGui.
-    const float fboW  = static_cast<float>(vp.fbo.getWidth());
-    const float fboH  = static_cast<float>(vp.fbo.getHeight());
-    const float fboOx = ox - canvasOrigin.x;   // canvas-local content TL X
-    const float fboOy = oy - canvasOrigin.y;   // canvas-local content TL Y
+    // renderer2D callback works in content coords (1 unit = 1 mm), Y-DOWN.
+    if (vp.dirty) {
+        const float fboW = static_cast<float>(vp.fbo.getWidth());
+        const float fboH = static_cast<float>(vp.fbo.getHeight());
 
-    vp.fbo.begin();
-    ofClear(18, 18, 24, 255);
-    ofSetupScreenOrtho(fboW, fboH, -1.f, 1.f);
-    ofTranslate(0.f, fboH);
-    ofScale(1.f, -1.f);          // flip to Y-DOWN
-    ofTranslate(fboOx, fboOy);   // apply pan
-    ofScale(zoom, zoom);          // apply zoom
-    vp.renderer2D();
-    vp.fbo.end();
+        vp.fbo.begin();
+        ofClear(18, 18, 24, 255);
+        ofSetupScreenOrtho(fboW, fboH, -1.f, 1.f);
+        ofTranslate(0.f, fboH);
+        ofScale(1.f, -1.f);              // flip to Y-DOWN
+        ofScale(vp.fboScale, vp.fboScale); // content units → FBO pixels (no pan/zoom)
+        vp.renderer2D();
+        vp.fbo.end();
+        vp.dirty = false;
+    }
 
-    // ---- Blit FBO (UV-flip compensates for OpenGL's bottom-up storage) -----
+    // ---- Blit FBO — pan/zoom applied here via position + size --------------
+    // The image is placed at (ox,oy) and sized to contentSize*zoom in screen px.
+    // PushClipRect (above) clips anything outside the canvas area.
     const auto& tex = vp.fbo.getTexture();
     if (tex.getTextureData().textureTarget == GL_TEXTURE_2D) {
-        ImGui::SetCursorScreenPos(canvasOrigin);
-        ImGui::Image(GetImTextureID(tex), ImVec2(canvasW, canvasH),
+        vp.fbo.getTexture().setTextureMinMagFilter(GL_LINEAR, GL_NEAREST);
+        ImGui::SetCursorScreenPos(ImVec2(ox, oy));
+        ImGui::Image(GetImTextureID(tex),
+                     ImVec2(vp.contentSize.x * zoom, vp.contentSize.y * zoom),
                      ImVec2(0, 1), ImVec2(1, 0));
     }
+
+    // ---- Grid / guides overlay (ImDrawList, every frame, O(visible lines)) -
+    if (vp.gridGuides)
+        vp.gridGuides->draw(dl, vp.contentSize.x, vp.contentSize.y,
+                            ox, oy, zoom,
+                            canvasOrigin.x, canvasOrigin.y, canvasW, canvasH);
 
     // ---- App overlays (toScreen() / toContent() are now valid) -------------
     if (vp.overlayDraw)

@@ -70,6 +70,12 @@ A list of all registered status bar items with a checkbox per item.
 Toggling a checkbox immediately shows/hides that item in the bar.
 See [`status-bar.md`](status-bar.md) for the full status item registry API.
 
+### MIDI
+
+Not built into ofxKit core. Apps that need MIDI routing add **ofxMidiKit**, which registers this page via `ofxMidiKit::registerWith(runtime())`.
+
+Named input/output **slots** (unlimited count), device combos, and clock sync are stored in `ofxKit/midiPrefs.json`, not in `appPrefs.json`.
+
 ---
 
 ## Persistence
