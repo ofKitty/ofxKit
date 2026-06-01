@@ -1,4 +1,5 @@
 #include "Runtime.h"
+#include "ViewWindow.h"
 #include "Runtime_private.h"
 
 #include "component_editor_registration.h"
@@ -63,6 +64,48 @@ void drawEntityNode(entt::registry& reg, entt::entity e)
                 auto* cr = reg.try_get<ecs::Relationship>(child);
                 child = cr ? cr->next_sibling : entt::null;
             }
+        }
+        ImGui::TreePop();
+    }
+
+    ImGui::PopID();
+}
+
+void drawSwatchLibraryNode(entt::registry& reg, entt::entity e)
+{
+    if (!reg.valid(e) || !reg.all_of<ecs::swatch_library_component>(e))
+        return;
+
+    auto& lib = reg.get<ecs::swatch_library_component>(e);
+    const entt::entity selected = Runtime::instance().selected();
+
+    std::string name = lib.libraryName.empty() ? "Swatch Library" : lib.libraryName;
+    name += " (" + std::to_string(lib.count()) + " colors)";
+
+    ImGuiTreeNodeFlags flags =
+        ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (lib.empty())
+        flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+    if (e == selected)
+        flags |= ImGuiTreeNodeFlags_Selected;
+
+    ImGui::PushID(static_cast<int>(e));
+    const bool open = ImGui::TreeNodeEx(name.c_str(), flags);
+
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
+        Runtime::instance().select(e);
+
+    if (open && !lib.empty()) {
+        for (int i = 0; i < lib.count(); i++) {
+            ImGui::PushID(i + 40000);
+            const std::string& swName = lib.colors[i].getDisplayName();
+            ImGuiTreeNodeFlags leafFlags =
+                ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen
+                | ImGuiTreeNodeFlags_SpanAvailWidth;
+            ImGui::TreeNodeEx(swName.c_str(), leafFlags);
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+                Runtime::instance().select(e);
+            ImGui::PopID();
         }
         ImGui::TreePop();
     }
@@ -290,66 +333,52 @@ void Runtime::registerBuiltInWindows()
                              "gizmo_mode",
                              [this] { m_gizmoMode = GizmoMode::Local; },
                              [this] { return m_gizmoMode == GizmoMode::Local; }});
-        registerWindow({"Toolbar",
-                        "View",
-                        true,
-                        true,
-                        [this](bool& visible) { drawToolbarWindow(visible); },
-                        "ofxkit.window.toolbar"});
+        registerWindow(makeViewWindow(
+            "Toolbar",
+            [this](bool& visible) { drawToolbarWindow(visible); },
+            {.id = "ofxkit.window.toolbar"}));
     }
 
     if (wantWindow("Scene", "ofxkit.window.scene")) {
-        registerWindow({"Scene",
-                        "View",
-                        true,
-                        true,
-                        [this](bool& visible) { drawSceneWindow(visible); },
-                        "ofxkit.window.scene"});
+        registerWindow(makeViewWindow(
+            "Scene",
+            [this](bool& visible) { drawSceneWindow(visible); },
+            {.id = "ofxkit.window.scene"}));
     }
 
     if (wantWindow("Properties", "ofxkit.window.properties")) {
-        registerWindow({"Properties",
-                        "View",
-                        true,
-                        true,
-                        [this](bool& visible) { drawPropertiesWindow(visible); },
-                        "ofxkit.window.properties"});
+        registerWindow(makeViewWindow(
+            "Properties",
+            [this](bool& visible) { drawPropertiesWindow(visible); },
+            {.id = "ofxkit.window.properties"}));
     }
 
     if (wantWindow("Shortcuts", "ofxkit.window.shortcuts")) {
-        registerWindow({"Shortcuts",
-                        "View",
-                        false,
-                        true,
-                        [this](bool& visible) { drawShortcutsWindow(visible); },
-                        "ofxkit.window.shortcuts"});
+        registerWindow(makeViewWindow(
+            "Shortcuts",
+            [this](bool& visible) { drawShortcutsWindow(visible); },
+            {.visible = false, .id = "ofxkit.window.shortcuts"}));
     }
 
     if (wantWindow("Preferences", "ofxkit.window.preferences")) {
-        registerWindow({"Preferences",
-                        "",
-                        false,
-                        true,
-                        [this](bool& visible) { drawPreferencesWindow(visible); },
-                        "ofxkit.window.preferences"});
+        registerWindow(makeViewWindow(
+            "Preferences",
+            [this](bool& visible) { drawPreferencesWindow(visible); },
+            {.menuGroup = "", .visible = false, .id = "ofxkit.window.preferences"}));
     }
 
     if (wantWindow("Code Editor", "ofxkit.window.code_editor")) {
-        registerWindow({"Code Editor",
-                        "View",
-                        false,
-                        true,
-                        [this](bool& visible) { drawCodeEditorWindow(visible); },
-                        "ofxkit.window.code_editor"});
+        registerWindow(makeViewWindow(
+            "Code Editor",
+            [this](bool& visible) { drawCodeEditorWindow(visible); },
+            {.visible = false, .id = "ofxkit.window.code_editor"}));
     }
 
     if (wantWindow("Path Editor", "ofxkit.window.path_editor")) {
-        registerWindow({"Path Editor",
-                        "View",
-                        false,
-                        true,
-                        [this](bool& visible) { drawPathEditorWindow(visible); },
-                        "ofxkit.window.path_editor"});
+        registerWindow(makeViewWindow(
+            "Path Editor",
+            [this](bool& visible) { drawPathEditorWindow(visible); },
+            {.visible = false, .id = "ofxkit.window.path_editor"}));
     }
 
     m_builtInWindowsRegistered = true;
@@ -385,6 +414,12 @@ void Runtime::drawSceneWindow(bool& visible)
             continue;
         if (!Runtime::instance().entityTreeLabel(reg, e).empty())
             drawEntityNode(reg, e);
+    }
+
+    for (auto [e, _] : reg.view<ecs::swatch_library_component>().each()) {
+        if (reg.all_of<ecs::Relationship>(e) || reg.all_of<ecs::node_component>(e))
+            continue;
+        drawSwatchLibraryNode(reg, e);
     }
 
     ImGui::End();

@@ -1,5 +1,6 @@
 #include "ProgressWindow.h"
 #include "Runtime.h"
+#include "ViewWindow.h"
 
 // ofMain.h is pulled in transitively via Runtime.h.
 // imgui.h is pulled in transitively via Runtime.h → ofxImGui.h.
@@ -173,13 +174,10 @@ void ProgressWindow::registerWithRuntime()
     if (m_registered) return;
     m_registered = true;
 
-    runtime().registerWindow({
+    runtime().registerWindow(makeViewWindow(
         "##ofkprogress",
-        /*menuGroup=*/ "",
-        /*visible=*/   false,
-        /*editModeOnly=*/ false,
-        [this](bool& visible) { draw(visible); }
-    });
+        [this](bool& visible) { draw(visible); },
+        {.menuGroup = "", .visible = false, .editModeOnly = false}));
 }
 
 void ProgressWindow::attachStatusBarItem()

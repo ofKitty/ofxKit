@@ -12,6 +12,7 @@
 
 #include "ofAppRunner.h"
 #include "Runtime.h"
+#include "ViewWindow.h"
 #include "ShortcutManager.h"
 #include "ProgressWindow.h"
 
@@ -44,3 +45,13 @@
 
 // ECS system for 2D bounding-box transform handles (requires ImGui + ofxEnTTKit)
 #include "TransformHandle2DSystem.h"
+
+// ofPath hit-testing, ImVectorEditor conversion, ImDrawList path strokes
+#include "OfPathUtil.h"
+
+// Click-vs-drag rectangle selection for 2D viewport overlays
+#include "MarqueeSelect2D.h"
+
+// Pan/zoom coordinate state usable in both ImGui viewports and OF main scene
+#include "View2DState.h"
+#include "View2DMouseAdapter.h"

@@ -18,6 +18,8 @@ void CodeEditorPanel::setup()
     m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::None);
     m_editor.SetPalette(TextEditor::PaletteId::Dark);
     m_editor.SetShowLineNumbersEnabled(true);
+    m_editor.SetShowWhitespacesEnabled(false);
+    m_editor.SetLineSpacing(1.0f);
 }
 
 void CodeEditorPanel::setDialogCallbacks(
@@ -116,10 +118,14 @@ void CodeEditorPanel::draw(bool& visible)
             m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Python);
         else if (ext == "json")
             m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Json);
+        else if (ext == "xml" || ext == "svg")
+            m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Xml);
         else if (ext == "sql")
             m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Sql);
         else if (ext == "gcode" || ext == "nc" || ext == "cnc" || ext == "tap")
             m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Gcode);
+        else if (ext == "md" || ext == "markdown")
+            m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Markdown);
         else
             m_editor.SetLanguageDefinition(TextEditor::LanguageDefinitionId::None);
     };
@@ -143,8 +149,12 @@ void CodeEditorPanel::draw(bool& visible)
             return {"Lua{.lua},All Files{.*}", "untitled.lua"};
         if (lang == TextEditor::LanguageDefinitionId::Json)
             return {"JSON{.json},All Files{.*}", "untitled.json"};
+        if (lang == TextEditor::LanguageDefinitionId::Xml)
+            return {"XML{.xml,.svg},All Files{.*}", "untitled.xml"};
         if (lang == TextEditor::LanguageDefinitionId::Sql)
             return {"SQL{.sql},All Files{.*}", "untitled.sql"};
+        if (lang == TextEditor::LanguageDefinitionId::Markdown)
+            return {"Markdown{.md,.markdown},All Files{.*}", "untitled.md"};
         return {"Source{.cpp,.h,.hpp,.c,.glsl,.vert,.frag,.hlsl,.py,.lua},"
                 "G-code{.gcode,.nc,.cnc},"
                 "Data{.json,.xml,.yaml,.txt,.md},"
@@ -296,11 +306,13 @@ void CodeEditorPanel::draw(bool& visible)
                     {"Python", TextEditor::LanguageDefinitionId::Python},
                     {"Lua", TextEditor::LanguageDefinitionId::Lua},
                     {"JSON", TextEditor::LanguageDefinitionId::Json},
+                    {"XML", TextEditor::LanguageDefinitionId::Xml},
                     {"SQL", TextEditor::LanguageDefinitionId::Sql},
                     {"AngelScript", TextEditor::LanguageDefinitionId::AngelScript},
                     {"GLSL", TextEditor::LanguageDefinitionId::Glsl},
                     {"HLSL", TextEditor::LanguageDefinitionId::Hlsl},
                     {"G-code", TextEditor::LanguageDefinitionId::Gcode},
+                    {"Markdown", TextEditor::LanguageDefinitionId::Markdown},
                 };
                 auto curLang = m_editor.GetLanguageDefinition();
                 for (auto& l : kLangs)
@@ -690,13 +702,7 @@ void CodeEditorPanel::draw(bool& visible)
     ImVec2 editorSize = ImGui::GetContentRegionAvail();
     editorSize.y -= statusH;
 
-    if (m_font) {
-        ImGui::PushFont(m_font);
-    }
     m_editor.Render("##code", ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows), editorSize);
-    if (m_font) {
-        ImGui::PopFont();
-    }
 
     if (m_syncPlaybackFromCursor && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
         const int curLine = getCursorLine();

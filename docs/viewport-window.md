@@ -280,3 +280,12 @@ Ruler strips are drawn along the top and left edges; dragging from them creates 
 | Callback split | Single `setViewportRenderer` | `renderer2D` + `overlayDraw` + `headerDraw` + `menuBarDraw` |
 | Rulers / guides | Optional strip on main window | Per-panel via `showRulers` + `GuideSet*` |
 | Use case | 3-D scene inspection | Flat documents, plotters, sprite editors |
+
+---
+
+## Rendering directly in the main OF window
+
+If you prefer to skip the FBO entirely and render content in `ofApp::draw()`, see
+[Main-Scene 2-D View](main-view-2d.md) (`setMainView2D`). It provides the same
+pan/zoom/ruler/overlay system but renders through the passthru central node rather
+than inside an ImGui panel.

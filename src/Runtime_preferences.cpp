@@ -1,6 +1,7 @@
 #include "Runtime.h"
 #include "Runtime_private.h"
 
+#include "ofxEnTTKit_all.h"
 #include "ImTheme.h"
 #include "ImThemeRegistry.h"
 #include "imgui_internal.h"
@@ -159,13 +160,28 @@ void Runtime::drawPrefsAppearance()
             setTheme(id);
     }
 
-    if (ImGui::Button("Randomise Accent \xef\x95\xa2")) {
-        ImTheme::ApplyRandomAccent();
-        applyUIScale();
+    ImGui::SeparatorText("Hue Shift");
+    bool hueActive = m_hueShift >= 0.f;
+    if (ImGui::Checkbox("Enable hue shift", &hueActive)) {
+        m_hueShift = hueActive ? 0.05f : -1.f;
+        applyTheme();
+        saveThemePref();
     }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Reset to ImGui dark + random accent colour\n"
-                          "(does not change the selected theme id)");
+    if (hueActive) {
+        ImGui::SetNextItemWidth(220.f);
+        if (ImGui::SliderFloat("Speed##hueShift", &m_hueShift, 0.001f, 0.5f,
+                               "%.3f cycles/s", ImGuiSliderFlags_Logarithmic)) {
+            m_hueShift = std::clamp(m_hueShift, 0.001f, 2.f);
+            saveThemePref();
+        }
+        if (ImGui::IsItemHovered()) {
+            const float period = (m_hueShift > 0.f) ? (1.f / m_hueShift) : 0.f;
+            ImGui::SetTooltip(
+                "How fast accent colours rotate through the hue wheel.\n"
+                "One full cycle every %.1f s at the current speed.",
+                period);
+        }
+    }
 
     // ---- UI Scale --------------------------------------------------------
     ImGui::SeparatorText("UI Scale");
@@ -221,12 +237,8 @@ void Runtime::drawPrefsAppearance()
     ImGui::TextDisabled("Ctrl+E - %s", hideAll ? "hides windows + menu bar + status bar"
                                                 : "hides windows only (same as Tab)");
 
-    // ---- Tweak / style editor -------------------------------------------
-    ImGui::SeparatorText("Tweak / Style Editor");
-    // Tabbed "Theme Tweaks" + "Style Editor" from ImTheme (formerly
-    // ImGui::ShowStyleEditor with extra HSV/rounding tweak sliders).
-    static ImTheme::TweakedTheme s_tweak;
-    ImTheme::ShowThemeTweakGui(&s_tweak);
+    ImGui::SeparatorText("Style Editor");
+    ImGui::ShowStyleEditor(nullptr);
 }
 
 void Runtime::drawPrefsGeneral()
@@ -652,10 +664,9 @@ void Runtime::registerBuiltInStatusItems()
                         true,
                         [this] {
                             auto& reg = registry();
-                            ImGui::TextDisabled("entities: %d",
-                                                static_cast<int>(reg.storage<
-                                                                     entt::entity>()
-                                                                     .free_list()));
+                            const size_t entityCount =
+                                static_cast<size_t>(reg.storage<entt::entity>().size());
+                            ImGui::TextDisabled("entities: %zu", entityCount);
                         }});
     registerStatusItem({"ofxkit.status.fps",
                         "ofxkit.stats",
@@ -1000,6 +1011,13 @@ void Runtime::buildDefaultDockLayout(ImGuiID dockId)
 {
     const ImVec2 size = ImGui::GetMainViewport()->WorkSize;
 
+    auto hasWindowId = [this](const std::string& id) {
+        for (const auto& w : m_windows)
+            if (w.id == id)
+                return true;
+        return false;
+    };
+
     ImGui::DockBuilderRemoveNode(dockId);
     ImGuiDockNodeFlags addNodeFlags = ImGuiDockNodeFlags_DockSpace;
     if (m_passthruCentralNode)
@@ -1008,31 +1026,46 @@ void Runtime::buildDefaultDockLayout(ImGuiID dockId)
     ImGui::DockBuilderAddNode(dockId, addNodeFlags);
     ImGui::DockBuilderSetNodeSize(dockId, size);
 
-    // Thin horizontal tool strip on top; remaining area is Scene / Properties.
-    ImGuiID toolbar = dockId;
-    ImGuiID workArea = dockId;
-    const float toolbarFrac =
-        std::clamp(40.f / std::max(size.y, 1.f), 0.04f, 0.08f);
-    ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Up, toolbarFrac, &toolbar,
-                                &workArea);
+    const bool hasToolbar = hasWindowId("ofxkit.window.toolbar");
+    const bool hasScene   = hasWindowId("ofxkit.window.scene");
+    const bool hasProps     = hasWindowId("ofxkit.window.properties")
+                           || hasWindowId("ofxkit.window.shortcuts")
+                           || hasWindowId("ofxkit.window.preferences")
+                           || !m_defaultLayoutExtraRightDocks.empty();
 
-    ImGuiID left, right, centre = workArea;
-    ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.25f, &left, &centre);
-    ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.28f, &right, &centre);
+    ImGuiID toolbar  = dockId;
+    ImGuiID workArea = dockId;
+    if (hasToolbar) {
+        const float toolbarFrac =
+            std::clamp(40.f / std::max(size.y, 1.f), 0.04f, 0.08f);
+        ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Up, toolbarFrac, &toolbar,
+                                    &workArea);
+    }
+
+    ImGuiID left = workArea, right = workArea, centre = workArea;
+    if (hasScene)
+        ImGui::DockBuilderSplitNode(workArea, ImGuiDir_Left, 0.25f, &left, &centre);
+    if (hasProps)
+        ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.28f, &right, &centre);
 
     ImGuiID bottom = centre;
     if (!m_defaultLayoutExtraBottomDocks.empty())
         ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.28f, &bottom, &centre);
 
-    ImGui::DockBuilderDockWindow("Toolbar###ofxkit.window.toolbar", toolbar);
-    ImGui::DockBuilderDockWindow("Scene###ofxkit.window.scene", left);
+    if (hasToolbar)
+        ImGui::DockBuilderDockWindow("Toolbar###ofxkit.window.toolbar", toolbar);
+    if (hasScene)
+        ImGui::DockBuilderDockWindow("Scene###ofxkit.window.scene", left);
     for (const auto& name : m_defaultLayoutExtraLeftDocks) {
         if (!name.empty())
             ImGui::DockBuilderDockWindow(name.c_str(), left);
     }
-    ImGui::DockBuilderDockWindow("Properties###ofxkit.window.properties", right);
-    ImGui::DockBuilderDockWindow("Shortcuts###ofxkit.window.shortcuts", right);
-    ImGui::DockBuilderDockWindow("Preferences###ofxkit.window.preferences", right);
+    if (hasWindowId("ofxkit.window.properties"))
+        ImGui::DockBuilderDockWindow("Properties###ofxkit.window.properties", right);
+    if (hasWindowId("ofxkit.window.shortcuts"))
+        ImGui::DockBuilderDockWindow("Shortcuts###ofxkit.window.shortcuts", right);
+    if (hasWindowId("ofxkit.window.preferences"))
+        ImGui::DockBuilderDockWindow("Preferences###ofxkit.window.preferences", right);
     for (const auto& name : m_defaultLayoutExtraRightDocks) {
         if (!name.empty())
             ImGui::DockBuilderDockWindow(name.c_str(), right);

@@ -1,0 +1,9 @@
+ofxEnTT
+ofxEnTTKit
+ofxImGui
+ofxImGuiNodeEditor
+ofxImGuiStyle
+ofxPDSP
+ofxSendFx
+ofxVCVRack
+ofxNetwork

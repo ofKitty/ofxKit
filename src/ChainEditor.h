@@ -43,6 +43,7 @@ public:
 
     void setAddButtonLabel(const char* label) { m_addButtonLabel = label; }
     void setShowRemoveButton(bool show) { m_showRemove = show; }
+    void setShowDragHandle(bool show) { m_showDragHandle = show; }
 
     void draw();
 
@@ -55,6 +56,7 @@ private:
     int                      m_addIndex = 0;
     const char*              m_addButtonLabel = "Add";
     bool                     m_showRemove = true;
+    bool                     m_showDragHandle = true;
 
     DrawStepFn    m_drawStep;
     LabelFn       m_label;

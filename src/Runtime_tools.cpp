@@ -1,5 +1,7 @@
 #include "Runtime.h"
+#include "ViewWindow.h"
 #include "Runtime_private.h"
+#include "CameraPickUtil.h"
 #include "panels/CodeEditorPanel.h"
 #include "panels/PathEditorPanel.h"
 #include "RulerUtil.h"
@@ -235,7 +237,7 @@ void Runtime::pickAtScreen(const ofCamera& cam, glm::vec2 screenPx, const ofRect
                                           screenPx,
                                           viewport);
     } else {
-        hit = ecs::pickSelectableEntity(registry(), cam, screenPx, viewport);
+        hit = ofkitty::pickSelectableEntity(registry(), cam, screenPx, viewport);
     }
     select(hit);
 }
@@ -332,7 +334,7 @@ void Runtime::drawGizmoInViewport(ViewportInstance& vp, const ofRectangle& imgSc
     };
 
     ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
-    ImGuizmo::SetID(static_cast<int>(
+    ImGui::PushID(static_cast<int>(
         1000 + (reinterpret_cast<uintptr_t>(&vp) & 0x0fffffff)));
 
     ImGuizmo::SetAlternativeWindow(ImGui::GetCurrentWindow());
@@ -351,6 +353,7 @@ void Runtime::drawGizmoInViewport(ViewportInstance& vp, const ofRectangle& imgSc
         ofxImGuizmoDetail::applyWorldTransformMatrix(nc->node, matrix);
     }
     ImGuizmo::SetAlternativeWindow(nullptr);
+    ImGui::PopID();
 }
 
 void Runtime::codeEditorSetText(const std::string& text,
@@ -456,13 +459,9 @@ Runtime::ViewportInstance* Runtime::addViewportWindow(std::string title)
     inst->title  = title;
     ViewportInstance* raw = inst.get();
 
-    registerWindow({
+    registerWindow(makeViewWindow(
         title,
-        "View",
-        true,
-        true,
-        [this, raw](bool& vis) { drawViewportWindow(*raw, vis); },
-    });
+        [this, raw](bool& vis) { drawViewportWindow(*raw, vis); }));
 
     return raw;
 }
@@ -473,7 +472,7 @@ Runtime::ViewportInstance* Runtime::addViewportWindow2D(
     auto* vp = addViewportWindow(std::move(title));
     if (vp) {
         vp->mode         = ViewportInstance::Mode::Ortho2D;
-        vp->contentSize  = contentSize;
+        vp->view2D.contentSize = contentSize;
         vp->contentUnit  = std::move(contentUnit);
         vp->editModeOnly = editModeOnly;
         // Patch the already-registered window's editModeOnly flag to match.
@@ -701,7 +700,7 @@ void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
         // Built-in View menu — always appended last
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem("Rulers", nullptr, &vp.showRulers);
-            if (ImGui::MenuItem("Fit to Window")) { vp.pan2D = {}; vp.zoom2D = 1.f; }
+            if (ImGui::MenuItem("Fit to Window")) { vp.view2D.fitToCanvas(); }
             ImGui::EndMenu();
         }
         ImGui::EndMenuBar();
@@ -744,24 +743,15 @@ void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
 
     const ImGuiIO& io = ImGui::GetIO();
 
-    // ---- Scroll-to-zoom (zoom around cursor) --------------------------------
-    const float fitZoom = (vp.contentSize.x > 0.f && vp.contentSize.y > 0.f)
-        ? std::min(canvasW / vp.contentSize.x, canvasH / vp.contentSize.y)
-        : 1.f;
+    // ---- Update view2D canvas geometry for this frame -----------------------
+    vp.view2D.canvasOrigin = { canvasOrigin.x, canvasOrigin.y };
+    vp.view2D.canvasW      = canvasW;
+    vp.view2D.canvasH      = canvasH;
+    vp.view2D.hovered      = canvasHovered;
 
+    // ---- Scroll-to-zoom (zoom around cursor) --------------------------------
     if (canvasHovered && io.MouseWheel != 0.f) {
-        const float factor  = (io.MouseWheel > 0.f) ? 1.15f : 1.f / 1.15f;
-        const float zoomOld = fitZoom * vp.zoom2D;
-        const float pxOld   = canvasW * 0.5f + vp.pan2D.x - vp.contentSize.x * zoomOld * 0.5f;
-        const float pyOld   = canvasH * 0.5f + vp.pan2D.y - vp.contentSize.y * zoomOld * 0.5f;
-        const float mu      = (io.MousePos.x - canvasOrigin.x - pxOld) / zoomOld;
-        const float mv      = (io.MousePos.y - canvasOrigin.y - pyOld) / zoomOld;
-        vp.zoom2D           = std::clamp(vp.zoom2D * factor, 0.1f, 50.f);
-        const float zoomNew = fitZoom * vp.zoom2D;
-        vp.pan2D.x = io.MousePos.x - canvasOrigin.x - mu * zoomNew
-                     - canvasW * 0.5f + vp.contentSize.x * zoomNew * 0.5f;
-        vp.pan2D.y = io.MousePos.y - canvasOrigin.y - mv * zoomNew
-                     - canvasH * 0.5f + vp.contentSize.y * zoomNew * 0.5f;
+        vp.view2D.applyScrollZoom(io.MouseWheel, io.MousePos.x, io.MousePos.y);
         // Wheel zoom owns the canvas — do not scroll the window or parent dock.
         ImGuiIO& ioMut = ImGui::GetIO();
         ioMut.MouseWheel  = 0.f;
@@ -769,30 +759,18 @@ void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
     }
 
     // ---- Middle-mouse / Alt+LMB pan ----------------------------------------
-    if (canvasHovered && (io.MouseDown[2] || (io.MouseDown[0] && io.KeyAlt))) {
-        vp.pan2D.x += io.MouseDelta.x;
-        vp.pan2D.y += io.MouseDelta.y;
-    }
+    if (canvasHovered && (io.MouseDown[2] || (io.MouseDown[0] && io.KeyAlt)))
+        vp.view2D.applyPanDelta(io.MouseDelta.x, io.MouseDelta.y);
 
     // ---- Double-click to fit ------------------------------------------------
-    if (canvasHovered && io.MouseDoubleClicked[0] && !io.KeyAlt) {
-        vp.zoom2D = 1.f;
-        vp.pan2D  = {};
-    }
+    if (canvasHovered && io.MouseDoubleClicked[0] && !io.KeyAlt)
+        vp.view2D.fitToCanvas();
 
     // ---- Canonical coordinate state (updated every frame) ------------------
-    // Coordinate system (Y-DOWN, matching OF screen and ImGui):
-    //   screen  = (ox + content.x * zoom,  oy + content.y * zoom)
-    //   content = ((screen.x - ox) / zoom, (screen.y - oy) / zoom)
-    const float zoom = fitZoom * vp.zoom2D;
-    const float ox   = canvasOrigin.x + canvasW * 0.5f + vp.pan2D.x
-                       - vp.contentSize.x * zoom * 0.5f;
-    const float oy   = canvasOrigin.y + canvasH * 0.5f + vp.pan2D.y
-                       - vp.contentSize.y * zoom * 0.5f;
-    vp._ox = ox;           vp._oy = oy;           vp._zoom = zoom;
-    vp._canvasOx = canvasOrigin.x;  vp._canvasOy = canvasOrigin.y;
-    vp._canvasW  = canvasW;         vp._canvasH  = canvasH;
-    vp._canvasHovered = canvasHovered;
+    vp.view2D.updateDerived();
+    const float ox   = vp.view2D.ox;
+    const float oy   = vp.view2D.oy;
+    const float zoom = vp.view2D.zoom_;
 
     // Match FBO pixel density to screen zoom so raster overlays (SVG, images)
     // stay sharp when magnified.  Quantised to whole px/mm steps — pan is
@@ -814,8 +792,8 @@ void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
 
     // ---- Allocate FBO (fixed content-space size, independent of panel size) --
     // fboScale px/mm may increase with zoom (see above); pan only affects blit.
-    const int targetFboW = std::max(1, (int)std::round(vp.contentSize.x * vp.fboScale));
-    const int targetFboH = std::max(1, (int)std::round(vp.contentSize.y * vp.fboScale));
+    const int targetFboW = std::max(1, (int)std::round(vp.view2D.contentSize.x * vp.fboScale));
+    const int targetFboH = std::max(1, (int)std::round(vp.view2D.contentSize.y * vp.fboScale));
     const bool needsAlloc = !vp.fbo.isAllocated()
         || vp.fbo.getWidth()  != targetFboW
         || vp.fbo.getHeight() != targetFboH;
@@ -858,23 +836,24 @@ void Runtime::drawViewportWindow2D(ViewportInstance& vp, bool& visible)
     if (tex.getTextureData().textureTarget == GL_TEXTURE_2D) {
         vp.fbo.getTexture().setTextureMinMagFilter(GL_LINEAR, GL_NEAREST);
         const ImVec2 imgMin(ox, oy);
-        const ImVec2 imgMax(ox + vp.contentSize.x * zoom, oy + vp.contentSize.y * zoom);
+        const ImVec2 imgMax(ox + vp.view2D.contentSize.x * zoom, oy + vp.view2D.contentSize.y * zoom);
         dl->AddImage(GetImTextureID(tex), imgMin, imgMax, ImVec2(0, 1), ImVec2(1, 0));
-    }
-
-    // ---- Grid / guides overlay (ImDrawList, every frame, O(visible lines)) -
-    if (vp.gridGuides) {
-        const float gridW = vp.gridGuides->paperW > 0.f
-            ? vp.gridGuides->paperW : vp.contentSize.x;
-        const float gridH = vp.gridGuides->paperH > 0.f
-            ? vp.gridGuides->paperH : vp.contentSize.y;
-        vp.gridGuides->draw(dl, gridW, gridH, ox, oy, zoom,
-                            canvasOrigin.x, canvasOrigin.y, canvasW, canvasH);
     }
 
     // ---- App overlays (toScreen() / toContent() are now valid) -------------
     if (vp.overlayDraw)
         vp.overlayDraw(vp);
+
+    // Grid after overlays so layout can track interactive zone/canvas edits
+    // in the same frame (e.g. plotter drawing-zone resize handles).
+    if (vp.gridGuides) {
+        const float gridW = vp.gridGuides->paperW > 0.f
+            ? vp.gridGuides->paperW : vp.view2D.contentSize.x;
+        const float gridH = vp.gridGuides->paperH > 0.f
+            ? vp.gridGuides->paperH : vp.view2D.contentSize.y;
+        vp.gridGuides->draw(dl, gridW, gridH, ox, oy, zoom,
+                            canvasOrigin.x, canvasOrigin.y, canvasW, canvasH);
+    }
 
     dl->PopClipRect();
 

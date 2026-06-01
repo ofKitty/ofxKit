@@ -2,6 +2,7 @@
 
 #include "ofMain.h"
 #include "RulerUtil.h"
+#include "View2DState.h"
 #include "ImGridGuides.h"
 #include "ShortcutManager.h"
 #include "ofxImGui.h"
@@ -13,6 +14,7 @@
 #include "ofxImGuiTextEdit.h"
 #include "ofxImGuizmo.h"
 #include <entt.hpp>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -60,6 +62,10 @@ public:
     // not wrapped in its own BeginMenu. Use when the callback handles its own menus.
     void addMenuBarRawCallback(MenuBarCallback cb);
 
+    // Register a callback whose items are injected inside the built-in "View" menu,
+    // after the Windows submenu. Replaces any previously registered callback.
+    void setViewMenuExtra(MenuBarCallback cb);
+    void clearViewMenuExtra() { setViewMenuExtra(nullptr); }
     // -------------------------------------------------------------------------
     // Post-setup hooks — called after ImGui is initialised (s_gui.setup),
     // before the first frame. Use to load fonts and apply styles.
@@ -96,6 +102,10 @@ public:
     // -------------------------------------------------------------------------
     entt::registry& registry() { return *m_registryView; }
     const entt::registry& registry() const { return *m_registryView; }
+
+    /// Swap the active registry observed by Properties / Scene panels.
+    /// Call when switching active documents (multi-doc tab support).
+    void setRegistry(entt::registry& reg) { m_registryView = &reg; }
 
     // -------------------------------------------------------------------------
     // Keyboard shortcuts
@@ -284,11 +294,11 @@ public:
         bool        showGizmo = true;
 
         // ---- Ortho2D (Mode::Ortho2D only) -----------------------------------
-        // Content size in the units used by your renderer (mm, px, etc.).
-        glm::vec2   contentSize = {200.f, 200.f};
+        // Pan/zoom state and coordinate math — also usable standalone (ofSpace).
+        // Access via vp->view2D.contentSize, vp->view2D.pan, vp->view2D.zoom.
+        View2DState view2D;
+
         std::string contentUnit = "px";    // shown on ruler tick labels
-        glm::vec2   pan2D       = {};      // canvas-pixel offset from fitted centre
-        float       zoom2D      = 1.f;     // multiplier on the computed fit zoom
 
         // Optional guide set — pass a pointer so the ruler strip creates and
         // moves draggable guides.  nullptr = no guides.
@@ -323,7 +333,7 @@ public:
         //   overlayDraw(vp)      ImGui context, called after the FBO image is
         //                        displayed.  Use toScreen() / toContent() for
         //                        hit-testing and ImDrawList overlays.
-        // menuBarDraw()       ImGui context, called inside BeginMenuBar / EndMenuBar
+        //   menuBarDraw()        ImGui context, called inside BeginMenuBar / EndMenuBar
         //                        before the built-in View menu.  Add BeginMenu /
         //                        SmallButton widgets here for app-specific controls.
         std::function<void()>                    menuBarDraw;
@@ -331,28 +341,23 @@ public:
         std::function<void()>                    renderer2D;
         std::function<void(ViewportInstance&)>   overlayDraw;
 
-        // ---- Coordinate converters (Ortho2D — updated each frame) ----------
-        // screen = (ox + content.x * zoom,  oy + content.y * zoom)
+        // ---- Coordinate converters (Ortho2D — valid after each Runtime frame) --
+        // Delegate to view2D; return ImVec2 overloads kept for ImGui overlayDraw use.
         ImVec2    toScreen (float cx, float cy) const noexcept
-            { return { _ox + cx * _zoom, _oy + cy * _zoom }; }
+            { const auto p = view2D.toScreen(cx, cy); return { p.x, p.y }; }
         glm::vec2 toContent(float sx, float sy) const noexcept
-            { return { (_zoom > 0.f) ? (sx - _ox) / _zoom : 0.f,
-                       (_zoom > 0.f) ? (sy - _oy) / _zoom : 0.f }; }
-        float     contentZoom()     const noexcept { return _zoom; }
-        ImVec2    canvasOriginPx()  const noexcept { return { _canvasOx, _canvasOy }; }
-        float     canvasW()         const noexcept { return _canvasW; }
-        float     canvasH()         const noexcept { return _canvasH; }
-        // True when the mouse is inside the canvas area and ImGui is not capturing it.
-        bool      isCanvasHovered() const noexcept { return _canvasHovered; }
+            { return view2D.toContent(sx, sy); }
+        float     contentZoom()    const noexcept { return view2D.contentZoom(); }
+        ImVec2    canvasOriginPx() const noexcept
+            { return { view2D.canvasOrigin.x, view2D.canvasOrigin.y }; }
+        float     canvasW()        const noexcept { return view2D.canvasW; }
+        float     canvasH()        const noexcept { return view2D.canvasH; }
+        bool      isCanvasHovered() const noexcept { return view2D.hovered; }
 
         // ---- Internal (managed by Runtime — do not modify) -----------------
         ofFbo     fbo;
         ofCamera  cam;
-        glm::vec2 lastPanelSize = {};  // used by the 3D orbit path to detect panel resize
-        float _ox = 0.f, _oy = 0.f, _zoom = 1.f;
-        float _canvasOx = 0.f, _canvasOy = 0.f;
-        float _canvasW  = 0.f, _canvasH  = 0.f;
-        bool  _canvasHovered = false;
+        glm::vec2 lastPanelSize = {};
     };
 
     using ViewportRenderer = std::function<void()>;
@@ -382,6 +387,114 @@ public:
     void removeViewportWindow(const std::string& title);
 
     // -------------------------------------------------------------------------
+    // Main-scene 2-D view  (ofSpace pan/zoom, passthru central node)
+    // -------------------------------------------------------------------------
+    // Use instead of addViewportWindow2D() when the app renders content directly
+    // in ofApp::draw() — no FBO, no ImGui panel wrapper.  The Runtime manages:
+    //   • canvas geometry  — tracks the passthru central-node bounds each frame
+    //   • pan/zoom input   — scroll, middle-drag/Alt+LMB, double-click to fit
+    //   • ImGui overlay    — full-screen transparent NoInputs window for DrawList
+    //
+    // Requires setPassthruCentralNode(true) (the default) in setup().
+    //
+    // ── Setup ────────────────────────────────────────────────────────────────
+    //   void ofApp::setup() {
+    //       ofkitty::runtime().setPassthruCentralNode(true);  // default
+    //
+    //       m_view = runtime().setMainView2D({docW, docH}, "mm");
+    //       m_view->overlayDraw = [this](ofkitty::Runtime::MainView2D& v) {
+    //           drawHandles(v);
+    //       };
+    //       m_view->menuBarDraw = [this]{ drawMenuExtras(); };
+    //   }
+    //
+    // ── Keep contentSize current (ofApp::update) ─────────────────────────────
+    //   // Set before the draw phase so the Runtime derives geometry correctly.
+    //   m_view->view2D.contentSize = myDoc.boundsInMM();
+    //
+    // ── Content rendering (ofApp::draw) ──────────────────────────────────────
+    //   void ofApp::draw() {
+    //       if (!m_view) return;
+    //       const auto& v = m_view->view2D;  // ox/oy/zoom_ already computed
+    //       ofPushMatrix();
+    //       ofTranslate(v.ox, v.oy);
+    //       ofScale(v.zoom_);
+    //       drawContent();          // draw in content units (mm/px/…), Y-DOWN
+    //       ofPopMatrix();
+    //   }
+    //
+    // ── Overlay handles (overlayDraw callback) ────────────────────────────────
+    //   // Runs inside the ImGui frame; toScreen/toContent are valid.
+    //   // !! With ImGuiConfigFlags_ViewportsEnable, ImDrawList vertices are in
+    //   //    desktop-global coords.  Add v.imguiScreenOffset to all toScreen()
+    //   //    results before passing them to an ImDrawList call.
+    //   void MyApp::drawHandles(ofkitty::Runtime::MainView2D& v) {
+    //       const glm::vec2 off = v.imguiScreenOffset;
+    //       ImDrawList* dl = ImGui::GetWindowDrawList();
+    //
+    //       auto scrPt = [&](float cx, float cy) -> ImVec2 {
+    //           auto p = v.view2D.toScreen(cx, cy);
+    //           return { p.x + off.x, p.y + off.y };  // → desktop-global
+    //       };
+    //       auto cntPt = [&](float sx, float sy) {     // io.MousePos → content
+    //           return v.view2D.toContent(sx - off.x, sy - off.y);
+    //       };
+    //
+    //       dl->AddCircle(scrPt(myPoint.x, myPoint.y), 6.f, IM_COL32_WHITE);
+    //
+    //       if (ImGui::IsMouseClicked(0) && v.view2D.hovered) {
+    //           auto c = cntPt(ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y);
+    //           pickPoint(c.x, c.y);
+    //       }
+    //   }
+    //
+    // ── Built-in input ────────────────────────────────────────────────────────
+    //   Scroll wheel       → zoom around cursor
+    //   Middle-drag        → pan  (disable: panOnMiddle = false)
+    //   Alt+LMB drag       → pan  (disable: panOnAltLMB = false)
+    //   Double-click LMB   → fit content to the passthru area
+    // -------------------------------------------------------------------------
+    struct MainView2D {
+        // Pan/zoom coordinate state — geometry filled by Runtime before each draw.
+        View2DState view2D;
+
+        std::string contentUnit = "mm";
+        GuideSet*   guides      = nullptr;
+        bool        showRulers  = false;
+
+        // Input configuration (applied by Runtime's built-in mouse handlers).
+        bool panOnMiddle = true;   ///< middle-mouse drag pans
+        bool panOnAltLMB = true;   ///< Alt+LMB drag pans
+
+        // Desktop-global offset of the main window (ImGui::GetMainViewport()->Pos).
+        // With ImGuiConfigFlags_ViewportsEnable, ImDrawList vertices are in desktop-
+        // global coords while view2D.toScreen() returns window-relative coords.
+        // Add imguiScreenOffset to any toScreen() result before passing it to an
+        // ImDrawList call. Zero when viewports are disabled (single-window mode).
+        glm::vec2 imguiScreenOffset = {};
+
+        // Called inside the ImGui frame each draw — draw handles, zone grids etc.
+        // view2D.toScreen() / toContent() are valid here.
+        // For ImDrawList calls: screen_pos = toScreen(cx,cy) + imguiScreenOffset
+        std::function<void(MainView2D&)> overlayDraw;
+
+        // Injected into the built-in "View" menu (between app menus and View menu).
+        std::function<void()> menuBarDraw;
+    };
+
+    /// Register a managed 2D pan/zoom view for the main OF scene.
+    /// Only one MainView2D is supported; calling again replaces the previous one.
+    /// Returns a raw pointer valid for the Runtime lifetime.
+    MainView2D* setMainView2D(glm::vec2   contentSize,
+                              std::string contentUnit = "mm");
+
+    /// Access the active main view (nullptr if not set).
+    MainView2D* mainView2D() { return m_mainView2D.get(); }
+
+    /// Remove and unregister the main view.
+    void clearMainView2D();
+
+    // -------------------------------------------------------------------------
     // Built-in window registration
     // -------------------------------------------------------------------------
     // Built-in windows are opt-in by default — none are registered unless you
@@ -409,6 +522,14 @@ public:
 
     /// Register all built-in windows.
     void enableAllBuiltInWindows();
+
+    // -------------------------------------------------------------------------
+    // Scene editor (3-D viewports, rulers, gizmo, Edit menu)
+    // -------------------------------------------------------------------------
+    // Off by default. Enable when your app uses ECS scene editing, viewport
+    // panels, or window rulers (View ▸ New Scene View / Rulers).
+    bool sceneEditorFeaturesEnabled() const { return m_sceneEditorFeaturesEnabled; }
+    void enableSceneEditorFeatures(bool on = true) { m_sceneEditorFeaturesEnabled = on; }
 
     // -------------------------------------------------------------------------
     // Selection
@@ -576,6 +697,27 @@ public:
                         std::function<void(const std::string& path)> onConfirm);
 
     // -------------------------------------------------------------------------
+    // OS file drop
+    // -------------------------------------------------------------------------
+    // When ofxImGui initialises it replaces openFrameworks' GLFW callbacks with
+    // its own, which drops the callback that drives ofApp::dragEvent.  The
+    // Runtime owns the window/GUI setup, so it re-installs a chained GLFW drop
+    // callback and forwards drops here.  Register a handler instead of relying
+    // on ofApp::dragEvent.
+    //
+    //   runtime().setFileDropHandler(
+    //       [this](const std::vector<std::filesystem::path>& files, glm::vec2 pos) {
+    //           m_resources.acceptFileDrop(files, pos);
+    //       });
+    //
+    // `pos` is window-relative pixels (top-left origin).
+    void setFileDropHandler(
+        std::function<void(const std::vector<std::filesystem::path>&, glm::vec2)> cb);
+
+    // Internal: invoked by the chained GLFW drop callback. No-op if no handler.
+    void dispatchFileDrop(const std::vector<std::filesystem::path>& files, glm::vec2 pos);
+
+    // -------------------------------------------------------------------------
     // 3-D transform gizmo — powered by ofxImGuizmo
     // -------------------------------------------------------------------------
     // Register the camera used for the gizmo overlay over the main OF scene.
@@ -641,6 +783,7 @@ public:
     int           codeEditorGetLineCount() const;
     void          codeEditorSetSyncPlaybackFromCursor(bool enabled);
     void          codeEditorSetOnCursorLineChanged(std::function<void(int line)> cb);
+    ImFont*       codeEditorFont() const { return m_codeEditorFont; }
 
     // -------------------------------------------------------------------------
     // Path Editor — powered by ofxImGuiVectorEditor
@@ -817,6 +960,7 @@ private:
     void saveUIScalePref();
 
     void applyTheme();
+    void applyThemeHueShift();
     void loadThemePref();
     void saveThemePref();
 
@@ -897,6 +1041,7 @@ private:
     bool             m_uiScaleSet  {false};
     bool             m_themeSet    {false};
     std::string      m_themeId     {kDefaultThemeId};
+    float            m_hueShift    {-1.f};  // -1 = off; else cycles/sec through hue wheel
 
     ofxImGui::Gui    m_gui;
 
@@ -904,6 +1049,7 @@ private:
 
     AppPrefs         m_prefs;
     bool             m_showRulers         {false};
+    bool             m_sceneEditorFeaturesEnabled {false};
     bool             m_defaultLayoutBuilt {false};
     bool             m_layoutResetPending {false};
 
@@ -940,7 +1086,32 @@ private:
     ViewportRenderer m_viewportRenderer;
     std::vector<std::unique_ptr<ViewportInstance>> m_viewportInstances;
 
+    // Main-scene 2D view (ofSpace pan/zoom)
+    std::unique_ptr<MainView2D> m_mainView2D;
+    bool  m_mainViewHovered       {false}; ///< set in ImGui frame, read in onPreDraw
+    float m_mainViewPrevMouseX    {0.f};
+    float m_mainViewPrevMouseY    {0.f};
+    float m_mainViewLastClickTime {0.f};   ///< manual double-click-to-fit detection
+    // Central-node bounds cached from the ImGui frame for use in onMainViewPreDraw.
+    // Window-relative coords (desktop-global minus iv->Pos).
+    float m_mainViewCentralX {0.f};
+    float m_mainViewCentralY {0.f};
+    float m_mainViewCentralW {0.f};  ///< 0 = not yet known (fallback to full window)
+    float m_mainViewCentralH {0.f};
+
+    void onMainViewPreDraw(ofEventArgs&);
+    void onMainViewMouseScrolled(ofMouseEventArgs&);
+    void onMainViewMouseDragged(ofMouseEventArgs&);
+    void onMainViewMousePressed(ofMouseEventArgs&);
+    void drawMainView2DOverlay();
+    void registerMainViewListeners();
+    void unregisterMainViewListeners();
+
     // ── Tool state ────────────────────────────────────────────────────────────
+    // OS file drop — chained GLFW drop callback installed after m_gui.setup().
+    void installFileDropCallback();
+    std::function<void(const std::vector<std::filesystem::path>&, glm::vec2)> m_fileDropHandler;
+
     // File dialogs
     std::unordered_map<std::string, std::function<void(const std::string&)>> m_fileDialogCbs;
     bool        m_fileDialogPrefsLoaded {false};
@@ -961,6 +1132,7 @@ private:
     // Editors (implementations under `src/panels/`)
     std::unique_ptr<CodeEditorPanel> m_codeEditor;
     std::unique_ptr<PathEditorPanel> m_pathEditor;
+    ImFont*                          m_codeEditorFont = nullptr;
 
     ofxImGui::GuiEventHelper m_eventHelper;
 };

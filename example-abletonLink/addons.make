@@ -1,0 +1,17 @@
+ofxEnTT
+ofxEnTTKit
+ofxEnTTInspector
+ofxImGui
+ofxImGuiFileDialog
+ofxImGuiStyle
+ofxImGuiTextEdit
+ofxImGuiVectorEditor
+ofxImGuizmo
+ofxKit
+ofxImGuiNodeEditor
+ofxPDSP
+ofxSendFx
+ofxVCVRack
+ofxNetwork
+ofxAbletonLink
+ofxAbletonLinkKit

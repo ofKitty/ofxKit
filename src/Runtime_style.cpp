@@ -39,6 +39,7 @@ void Runtime::applyUIScale()
     if (!ImGui::GetCurrentContext())
         return;
     ImTheme::SetUIScale(m_uiScale);
+    applyThemeHueShift();
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowMinSize = ImVec2(160.f * m_uiScale, 50.f * m_uiScale);
 }
@@ -85,6 +86,32 @@ void Runtime::setTheme(const std::string& id)
     saveThemePref();
 }
 
+void Runtime::applyThemeHueShift()
+{
+    if (m_hueShift < 0.f || !ImGui::GetCurrentContext())
+        return;
+
+    const float hueOffset =
+        std::fmod(ofGetElapsedTimef() * m_hueShift, 1.f);
+
+    ImGuiStyle& style = ImGui::GetStyle();
+    for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+        ImVec4& col = style.Colors[i];
+        float   h, s, v;
+        ImGui::ColorConvertRGBtoHSV(col.x, col.y, col.z, h, s, v);
+        if (s > 0.05f) {
+            h += hueOffset;
+            if (h >= 1.f)
+                h -= 1.f;
+            else if (h < 0.f)
+                h += 1.f;
+        }
+        ImGui::ColorConvertHSVtoRGB(h, s, v, col.x, col.y, col.z);
+    }
+    // Do not Commit() here — that would snapshot already-scaled metrics as the
+    // new baseline and double-apply UI scale (padding / spacing jump).
+}
+
 void Runtime::applyTheme()
 {
     if (!ImGui::GetCurrentContext())
@@ -96,6 +123,7 @@ void Runtime::applyTheme()
         ImTheme::Setup(ImTheme::Theme_DarculaDarker, m_uiScale);
         m_themeId = kDefaultThemeId;
     }
+    applyThemeHueShift();
 }
 
 void Runtime::loadThemePref()
@@ -111,6 +139,15 @@ void Runtime::loadThemePref()
             m_themeId  = j["theme"].get<std::string>();
             m_themeSet = true;
         }
+        if (j.contains("hueShiftSpeed")) {
+            m_hueShift = j["hueShiftSpeed"].get<float>();
+            if (m_hueShift >= 0.f)
+                m_hueShift = std::clamp(m_hueShift, 0.001f, 2.f);
+        } else if (j.contains("hueShift")) {
+            // Legacy: stored a static hue offset — enable at a gentle default speed.
+            const float v = j["hueShift"].get<float>();
+            m_hueShift = (v >= 0.f) ? 0.05f : -1.f;
+        }
     } catch (...) {}
 }
 
@@ -120,7 +157,8 @@ void Runtime::saveThemePref()
     try {
         of::filesystem::create_directories(of::filesystem::path(path).parent_path());
         ofJson j;
-        j["theme"] = m_themeId;
+        j["theme"]         = m_themeId;
+        j["hueShiftSpeed"] = m_hueShift;
         std::ofstream out(path);
         out << j.dump(2);
     } catch (...) {}

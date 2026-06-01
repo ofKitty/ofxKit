@@ -8,12 +8,24 @@
 #include "ofJson.h"
 #include "imgui_internal.h"   // DockBuilder API
 
+#ifndef TARGET_OPENGLES
+    #include "ofAppGLFWWindow.h"   // ofGetWindowPtr() downcast target
+    #define GLFW_INCLUDE_NONE      // OF already provides the GL loader
+    #include <GLFW/glfw3.h>        // GLFWdropfun + glfwSetDropCallback/glfwGetCursorPos
+#endif
+
 #include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <functional>
 
 namespace ofkitty {
+
+// File-scope static for the View-menu extra callback.
+// Declared here (inside the namespace, before first use) so MenuBarCallback
+// resolves without full qualification and the symbol is visible to all
+// functions in this translation unit.
+static Runtime::MenuBarCallback s_viewMenuExtra;
 
 // ============================================================================
 // Singleton
@@ -63,6 +75,64 @@ void Runtime::attachInternal(shared_ptr<ofAppBaseWindow> /*window*/,
 }
 
 // ============================================================================
+// OS file drop — chained GLFW drop callback
+// ============================================================================
+// ofxImGui's imgui_impl_glfw replaces OF's GLFW callbacks during gui.setup(),
+// which kills the drop callback that drives ofApp::dragEvent. We install our
+// own drop callback after gui.setup() and chain whatever was there before.
+
+#ifndef TARGET_OPENGLES
+namespace {
+GLFWdropfun s_prevDropCallback = nullptr;
+
+void kittyGlfwDropCallback(GLFWwindow* win, int count, const char** paths)
+{
+    // Intentionally NOT forwarding to s_prevDropCallback: the previous callback
+    // is typically OF's own drop_cb (imgui_impl_glfw installs none), which would
+    // re-dispatch ofApp::dragEvent and duplicate the drop. Apps route drops via
+    // Runtime::setFileDropHandler() instead.
+    (void)s_prevDropCallback;
+
+    if (count <= 0 || paths == nullptr)
+        return;
+
+    std::vector<std::filesystem::path> files;
+    files.reserve(count);
+    for (int i = 0; i < count; ++i)
+        if (paths[i]) files.emplace_back(paths[i]);
+
+    double mx = 0.0, my = 0.0;
+    glfwGetCursorPos(win, &mx, &my);
+    Runtime::instance().dispatchFileDrop(files, glm::vec2((float)mx, (float)my));
+}
+} // namespace
+#endif
+
+void Runtime::setFileDropHandler(
+    std::function<void(const std::vector<std::filesystem::path>&, glm::vec2)> cb)
+{
+    m_fileDropHandler = std::move(cb);
+}
+
+void Runtime::dispatchFileDrop(const std::vector<std::filesystem::path>& files, glm::vec2 pos)
+{
+    if (m_fileDropHandler)
+        m_fileDropHandler(files, pos);
+}
+
+void Runtime::installFileDropCallback()
+{
+#ifndef TARGET_OPENGLES
+    auto* glfwWin = dynamic_cast<ofAppGLFWWindow*>(ofGetWindowPtr());
+    if (!glfwWin) return;
+    GLFWwindow* w = glfwWin->getGLFWWindow();
+    if (!w) return;
+    // Install ours last so it wins, but keep the previous one in the chain.
+    s_prevDropCallback = glfwSetDropCallback(w, &kittyGlfwDropCallback);
+#endif
+}
+
+// ============================================================================
 // Selection
 // ============================================================================
 
@@ -94,9 +164,11 @@ void Runtime::onSetup(ofEventArgs&)
     ProgressWindow::instance().attachStatusBarItem();
     loadAppPrefs();
 
-    // F2 to toggle rulers
-    m_shortcuts.bind(OF_KEY_F2, 0, "Toggle Rulers",
-                     [this] { toggleRulers(); });
+    // F2 to toggle rulers (scene editor only)
+    if (m_sceneEditorFeaturesEnabled) {
+        m_shortcuts.bind(OF_KEY_F2, 0, "Toggle Rulers",
+                         [this] { toggleRulers(); });
+    }
 
     ImGuiConfigFlags imguiFlags = ImGuiConfigFlags_DockingEnable;
 #ifndef TARGET_OPENGLES
@@ -104,7 +176,7 @@ void Runtime::onSetup(ofEventArgs&)
 #endif
     m_gui.setup(nullptr, false, imguiFlags, true);
 
-    // Load Input Sans + Font Awesome icons so toolbar / UI can use FA glyphs.
+    // Load Input Sans + Font Awesome for UI, JetBrains Mono for the code editor.
     // Must happen right after gui.setup() before the first frame renders.
     ImFont* codeEditorFont = nullptr;
     if (ImFont* font = ImFonts::LoadDefaultFonts(ImGui::GetIO().Fonts, 14.0f)) {
@@ -117,6 +189,11 @@ void Runtime::onSetup(ofEventArgs&)
     // the app while ImGui has claimed them.  Must happen after m_gui.setup()
     // so the ImGui context exists when the first WantCaptureMouse check fires.
     m_eventHelper.setup();
+
+    // ofxImGui just replaced OF's GLFW callbacks (including the drop callback
+    // that drives ofApp::dragEvent). Re-install a chained drop callback so file
+    // drops reach apps that registered via setFileDropHandler().
+    installFileDropCallback();
 
     // Keep docking/layout state in a stable app data location. ImGui's default
     // "imgui.ini" is relative to the process working directory, which can
@@ -134,6 +211,7 @@ void Runtime::onSetup(ofEventArgs&)
         m_codeEditor = std::make_unique<CodeEditorPanel>();
         m_codeEditor->setup();
         if (codeEditorFont) {
+            m_codeEditorFont = codeEditorFont;
             m_codeEditor->setFont(codeEditorFont);
         }
         m_codeEditor->setDialogCallbacks(
@@ -193,35 +271,37 @@ void Runtime::onSetup(ofEventArgs&)
                 toggleEditMode();
         });
 
-    // Gizmo operation shortcuts (only fire when edit mode is active)
-    m_shortcuts.registerAction("ofkitty.gizmo_translate", 'w', 0,
-                               "Gizmo: Translate",
-                               [this] {
-                                   if (m_editMode)
-                                       m_gizmoOp = GizmoOperation::Translate;
-                               });
-    m_shortcuts.registerAction("ofkitty.gizmo_rotate", 'e', 0,
-                               "Gizmo: Rotate",
-                               [this] {
-                                   if (m_editMode)
-                                       m_gizmoOp = GizmoOperation::Rotate;
-                               });
-    m_shortcuts.registerAction("ofkitty.gizmo_scale", 'r', 0,
-                               "Gizmo: Scale",
-                               [this] {
-                                   if (m_editMode)
-                                       m_gizmoOp = GizmoOperation::Scale;
-                               });
-    m_shortcuts.registerAction(
-        "ofkitty.gizmo_mode_toggle",
-        'x',
-        0,
-        "Gizmo: Toggle World/Local",
-        [this] {
-            if (m_editMode)
-                m_gizmoMode = (m_gizmoMode == GizmoMode::World) ? GizmoMode::Local
-                                                                : GizmoMode::World;
-        });
+    // Gizmo operation shortcuts (scene editor only)
+    if (m_sceneEditorFeaturesEnabled) {
+        m_shortcuts.registerAction("ofkitty.gizmo_translate", 'w', 0,
+                                   "Gizmo: Translate",
+                                   [this] {
+                                       if (m_editMode)
+                                           m_gizmoOp = GizmoOperation::Translate;
+                                   });
+        m_shortcuts.registerAction("ofkitty.gizmo_rotate", 'e', 0,
+                                   "Gizmo: Rotate",
+                                   [this] {
+                                       if (m_editMode)
+                                           m_gizmoOp = GizmoOperation::Rotate;
+                                   });
+        m_shortcuts.registerAction("ofkitty.gizmo_scale", 'r', 0,
+                                   "Gizmo: Scale",
+                                   [this] {
+                                       if (m_editMode)
+                                           m_gizmoOp = GizmoOperation::Scale;
+                                   });
+        m_shortcuts.registerAction(
+            "ofkitty.gizmo_mode_toggle",
+            'x',
+            0,
+            "Gizmo: Toggle World/Local",
+            [this] {
+                if (m_editMode)
+                    m_gizmoMode = (m_gizmoMode == GizmoMode::World) ? GizmoMode::Local
+                                                                    : GizmoMode::World;
+            });
+    }
 
     m_shortcuts.loadBindingsFromFile(ShortcutManager::defaultBindingsPath());
     m_shortcuts.setAutoSaveEnabled(true);
@@ -229,7 +309,8 @@ void Runtime::onSetup(ofEventArgs&)
 
 void Runtime::onUpdate(ofEventArgs&)
 {
-    // Future: TransformSystem, physics, etc.
+    if (m_hueShift >= 0.f && ImGui::GetCurrentContext())
+        applyTheme();
 }
 
 void Runtime::onExit(ofEventArgs&)
@@ -344,7 +425,8 @@ void Runtime::drawOverlay()
     if (m_editMode)
         ImGuizmo::BeginFrame();
 
-    // Status bar follows the same chrome rule as the menu bar.
+    // Status bar before dockspace so the main viewport work area excludes it.
+    const float statusBarHeight = showChrome ? ImGui::GetFrameHeight() : 0.f;
     if (showChrome)
         drawStatusBar();
 
@@ -358,11 +440,33 @@ void Runtime::drawOverlay()
     // the OF background renders through cleanly; in edit mode the app's own
     // m_passthruCentralNode preference is honoured.
     {
-        ImGuiDockNodeFlags dsFlags = ImGuiDockNodeFlags_NoDockingOverCentralNode;
+        ImGuiDockNodeFlags dsFlags = ImGuiDockNodeFlags_None;
         if (!m_editMode || m_passthruCentralNode)
-            dsFlags |= ImGuiDockNodeFlags_PassthruCentralNode;
-        ImGuiID dockId = ImGui::DockSpaceOverViewport(
-            0, ImGui::GetMainViewport(), dsFlags);
+            dsFlags |= ImGuiDockNodeFlags_PassthruCentralNode
+                    |  ImGuiDockNodeFlags_NoDockingOverCentralNode;
+
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        // Dock host: from below main menu (WorkPos) to above status bar (explicit).
+        const ImVec2 dockPos(vp->WorkPos.x, vp->WorkPos.y);
+        const float dockBottom =
+            vp->Pos.y + vp->Size.y - (showChrome ? statusBarHeight : 0.f);
+        ImVec2 dockSize(vp->WorkSize.x, std::max(0.f, dockBottom - dockPos.y));
+
+        ImGui::SetNextWindowPos(dockPos);
+        ImGui::SetNextWindowSize(dockSize);
+        ImGui::SetNextWindowViewport(vp->ID);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+        ImGuiWindowFlags hostFlags =
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize
+            | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus
+            | ImGuiWindowFlags_NoDocking;
+        if (!m_editMode || m_passthruCentralNode)
+            hostFlags |= ImGuiWindowFlags_NoBackground;
+        ImGui::Begin("##ofxkit.DockHost", nullptr, hostFlags);
+        ImGui::PopStyleVar(3);
+        ImGuiID dockId = ImGui::DockSpace(ImGui::GetID("ofxkit.DockSpace"), ImVec2(0.f, 0.f), dsFlags);
 
         if (!m_defaultLayoutBuilt) {
             bool noIni = true;
@@ -388,10 +492,12 @@ void Runtime::drawOverlay()
         }
 
         if (m_editMode) {
-            if (m_showRulers)
+            if (m_sceneEditorFeaturesEnabled && m_showRulers)
                 drawRulers();
-            drawGizmoOverlay();
+            if (m_sceneEditorFeaturesEnabled)
+                drawGizmoOverlay();
         }
+        ImGui::End(); // ##ofxkit.DockHost
     }
 
     for (auto& window : m_windows) {
@@ -408,6 +514,9 @@ void Runtime::drawOverlay()
     }
 
     processFileDialogs();
+
+    // Main-scene 2D overlay (handles, zone grids etc. drawn over the OF scene).
+    drawMainView2DOverlay();
 
     m_gui.end();
     m_gui.draw();
@@ -560,19 +669,34 @@ void Runtime::renderMainMenuBar()
             ImGui::PopID();
         }
 
-        if (m_editMode)
+        // Main-scene 2D view menu/toolbar (zoom controls, overlay toggles, …).
+        if (m_mainView2D && m_mainView2D->menuBarDraw) {
+            ImGui::PushID("ofkitty.mainview2d.menubar");
+            m_mainView2D->menuBarDraw();
+            ImGui::PopID();
+        }
+
+        if (m_editMode && m_sceneEditorFeaturesEnabled)
             renderGizmoMenu();
 
         if (ImGui::BeginMenu("View")) {
-            for (auto& window : m_windows) {
-                if (window.menuGroup == "View") {
-                    bool prev = window.visible;
-                    ImGui::MenuItem(window.name.c_str(), nullptr, &window.visible);
-                    if (window.visible != prev)
-                        saveAppPrefs();
+            if (ImGui::BeginMenu("Windows")) {
+                for (auto& window : m_windows) {
+                    if (window.menuGroup == "View") {
+                        bool prev = window.visible;
+                        ImGui::MenuItem(window.name.c_str(), nullptr, &window.visible);
+                        if (window.visible != prev)
+                            saveAppPrefs();
+                    }
                 }
+                ImGui::EndMenu();
             }
-            if (m_editMode) {
+            if (s_viewMenuExtra) {
+                ImGui::PushID("ofkitty.viewMenuExtra");
+                s_viewMenuExtra();
+                ImGui::PopID();
+            }
+            if (m_editMode && m_sceneEditorFeaturesEnabled) {
                 ImGui::Separator();
                 if (ImGui::MenuItem("New Scene View")) {
                     addViewportWindow();
@@ -718,6 +842,11 @@ void Runtime::addMenuBarRawCallback(MenuBarCallback cb)
     m_menuBarRawCallbacks.push_back(std::move(cb));
 }
 
+void Runtime::setViewMenuExtra(MenuBarCallback cb)
+{
+    s_viewMenuExtra = std::move(cb);
+}
+
 void Runtime::setImGuiIniPath(std::string path)
 {
     m_imguiIniPath = std::move(path);
@@ -755,6 +884,209 @@ void Runtime::setAppName(std::string name)
 {
     if (!name.empty())
         m_appName = std::move(name);
+}
+
+// ============================================================================
+// MainView2D — pan/zoom for the OF main window (ofSpace)
+// ============================================================================
+
+Runtime::MainView2D* Runtime::setMainView2D(glm::vec2 contentSize, std::string contentUnit)
+{
+    if (m_mainView2D)
+        unregisterMainViewListeners();
+
+    m_mainView2D = std::make_unique<MainView2D>();
+    m_mainView2D->view2D.contentSize = contentSize;
+    m_mainView2D->contentUnit        = std::move(contentUnit);
+    registerMainViewListeners();
+    return m_mainView2D.get();
+}
+
+void Runtime::clearMainView2D()
+{
+    if (!m_mainView2D) return;
+    unregisterMainViewListeners();
+    m_mainView2D.reset();
+}
+
+void Runtime::registerMainViewListeners()
+{
+    ofAddListener(ofEvents().draw,         this, &Runtime::onMainViewPreDraw,
+                  OF_EVENT_ORDER_BEFORE_APP);
+    ofAddListener(ofEvents().mouseScrolled, this, &Runtime::onMainViewMouseScrolled,
+                  OF_EVENT_ORDER_AFTER_APP);
+    ofAddListener(ofEvents().mouseDragged,  this, &Runtime::onMainViewMouseDragged,
+                  OF_EVENT_ORDER_AFTER_APP);
+    ofAddListener(ofEvents().mousePressed,  this, &Runtime::onMainViewMousePressed,
+                  OF_EVENT_ORDER_AFTER_APP);
+}
+
+void Runtime::unregisterMainViewListeners()
+{
+    ofRemoveListener(ofEvents().draw,         this, &Runtime::onMainViewPreDraw,
+                     OF_EVENT_ORDER_BEFORE_APP);
+    ofRemoveListener(ofEvents().mouseScrolled, this, &Runtime::onMainViewMouseScrolled,
+                     OF_EVENT_ORDER_AFTER_APP);
+    ofRemoveListener(ofEvents().mouseDragged,  this, &Runtime::onMainViewMouseDragged,
+                     OF_EVENT_ORDER_AFTER_APP);
+    ofRemoveListener(ofEvents().mousePressed,  this, &Runtime::onMainViewMousePressed,
+                     OF_EVENT_ORDER_AFTER_APP);
+}
+
+// Runs BEFORE ofApp::draw() — publish last-frame's canvas geometry so the
+// app transform in draw() matches what the overlay computed in the previous frame.
+// The accurate geometry (central-node bounds) is set inside drawMainView2DOverlay()
+// which runs inside the ImGui frame; we just carry it forward here so draw() reads
+// a valid, stable value. On the very first frame the full window is used as fallback.
+void Runtime::onMainViewPreDraw(ofEventArgs&)
+{
+    if (!m_mainView2D) return;
+    auto& v = m_mainView2D->view2D;
+
+    // If we have a cached central-node rect from the previous ImGui frame use it;
+    // otherwise fall back to the full window (single-frame approximation on startup).
+    if (m_mainViewCentralW > 0.f && m_mainViewCentralH > 0.f) {
+        v.canvasOrigin = { m_mainViewCentralX, m_mainViewCentralY };
+        v.canvasW      = m_mainViewCentralW;
+        v.canvasH      = m_mainViewCentralH;
+    } else {
+        v.canvasOrigin = { 0.f, 0.f };
+        v.canvasW      = static_cast<float>(ofGetWidth());
+        v.canvasH      = static_cast<float>(ofGetHeight());
+    }
+    v.hovered = m_mainViewHovered;
+    v.updateDerived();
+}
+
+void Runtime::onMainViewMouseScrolled(ofMouseEventArgs& e)
+{
+    if (!m_mainView2D || !m_mainView2D->view2D.hovered) return;
+    // e.x/e.y are window-relative OF coords — same space as View2DState.
+    m_mainView2D->view2D.applyScrollZoom(
+        e.scrollY, static_cast<float>(e.x), static_cast<float>(e.y));
+}
+
+void Runtime::onMainViewMouseDragged(ofMouseEventArgs& e)
+{
+    if (!m_mainView2D || !m_mainView2D->view2D.hovered) return;
+    const bool isPan =
+        (m_mainView2D->panOnMiddle && e.button == OF_MOUSE_BUTTON_MIDDLE)
+     || (m_mainView2D->panOnAltLMB && e.button == OF_MOUSE_BUTTON_LEFT
+         && ofGetKeyPressed(OF_KEY_ALT));
+    // Deltas are offset-invariant so no desktop-global correction needed.
+    if (isPan)
+        m_mainView2D->view2D.applyPanDelta(
+            static_cast<float>(e.x) - m_mainViewPrevMouseX,
+            static_cast<float>(e.y) - m_mainViewPrevMouseY);
+    m_mainViewPrevMouseX = static_cast<float>(e.x);
+    m_mainViewPrevMouseY = static_cast<float>(e.y);
+}
+
+void Runtime::onMainViewMousePressed(ofMouseEventArgs& e)
+{
+    m_mainViewPrevMouseX = static_cast<float>(e.x);
+    m_mainViewPrevMouseY = static_cast<float>(e.y);
+
+    // Manual double-click detection — ofCoreEvents has no mouseDoubleClicked.
+    // Double-click LMB (no Alt) over the scene fits content to the window.
+    const float now = ofGetElapsedTimef();
+    const bool sameButton = (e.button == OF_MOUSE_BUTTON_LEFT);
+    const bool quick = (now - m_mainViewLastClickTime) < 0.3f;
+    if (sameButton && quick && m_mainView2D
+        && m_mainView2D->view2D.hovered && !ofGetKeyPressed(OF_KEY_ALT)) {
+        m_mainView2D->view2D.fitToCanvas();
+        m_mainViewLastClickTime = 0.f;  // consume so a triple-click doesn't re-fire
+    } else if (sameButton) {
+        m_mainViewLastClickTime = now;
+    }
+}
+
+// Called from onDraw() inside the ImGui frame.
+void Runtime::drawMainView2DOverlay()
+{
+    if (!m_mainView2D) return;
+
+    const ImGuiViewport* iv = ImGui::GetMainViewport();
+
+    // ---- Resolve the actual passthru central-node bounds --------------------
+    // The central node is what's left after all docked side panels take their
+    // space. Its rect is in ImGui desktop-global coords (because ViewportsEnable
+    // is on). We convert to window-relative so canvasOrigin/W/H match the OF
+    // drawing coordinate system (which uses window-relative pixels).
+    //
+    // With ViewportsEnable, iv->Pos is the window's desktop position. Subtracting
+    // it converts desktop-global ImGui coords → window-relative OF coords.
+
+    ImVec2 centralPos  = iv->WorkPos;   // fallback: full work area
+    ImVec2 centralSize = iv->WorkSize;
+
+    ImGuiID dockId = ImGui::GetID("ofxkit.DockSpace");
+    if (ImGuiDockNode* cn = ImGui::DockBuilderGetCentralNode(dockId)) {
+        if (cn->Pos.x != 0.f || cn->Pos.y != 0.f || cn->Size.x > 0.f) {
+            centralPos  = cn->Pos;
+            centralSize = cn->Size;
+        }
+    }
+
+    // Window-relative canvas geometry (OF draw() uses window-relative coords).
+    const float cx = centralPos.x  - iv->Pos.x;
+    const float cy = centralPos.y  - iv->Pos.y;
+    const float cw = centralSize.x;
+    const float ch = centralSize.y;
+
+    // Cache for onMainViewPreDraw (runs before the next ImGui frame).
+    m_mainViewCentralX = cx;
+    m_mainViewCentralY = cy;
+    m_mainViewCentralW = cw;
+    m_mainViewCentralH = ch;
+
+    // Update this frame's view geometry now so the overlay callback reads the
+    // same state that draw() will use next frame (one-frame lag is acceptable).
+    auto& v   = m_mainView2D->view2D;
+    v.canvasOrigin = { cx, cy };
+    v.canvasW      = cw;
+    v.canvasH      = ch;
+
+    // Hover: mouse is over the central area and ImGui isn't consuming it.
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool mouseInCentral =
+        io.MousePos.x >= centralPos.x && io.MousePos.x < centralPos.x + centralSize.x &&
+        io.MousePos.y >= centralPos.y && io.MousePos.y < centralPos.y + centralSize.y;
+    const bool imguiOwnsMouse =
+        io.WantCaptureMouse
+        || ImGui::IsAnyItemActive()
+        || ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
+    m_mainViewHovered = mouseInCentral && !imguiOwnsMouse;
+    v.hovered = m_mainViewHovered;
+
+    v.updateDerived();
+
+    if (!m_mainView2D->overlayDraw) return;
+
+    // ---- Draw overlay -------------------------------------------------------
+    // The overlay window covers the full work area (transparent, no-input) so
+    // it sits above the OF scene but below all docked panels.
+    // DrawList vertices are in desktop-global coords (ViewportsEnable). Callers
+    // that draw to ImDrawList must add iv->Pos to window-relative screen coords
+    // from toScreen() to convert to desktop-global. This offset is exposed via
+    // MainView2D::imguiScreenOffset so overlayDraw callbacks can use it.
+    m_mainView2D->imguiScreenOffset = { iv->Pos.x, iv->Pos.y };
+
+    ImGui::SetNextWindowPos(iv->WorkPos);
+    ImGui::SetNextWindowSize(iv->WorkSize);
+    ImGui::SetNextWindowBgAlpha(0.f);
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoDecoration
+        | ImGuiWindowFlags_NoInputs
+        | ImGuiWindowFlags_NoBringToFrontOnFocus
+        | ImGuiWindowFlags_NoSavedSettings
+        | ImGuiWindowFlags_NoFocusOnAppearing
+        | ImGuiWindowFlags_NoNav
+        | ImGuiWindowFlags_NoMove;
+    if (ImGui::Begin("##ofkitty_main_view2d_overlay", nullptr, flags)) {
+        m_mainView2D->overlayDraw(*m_mainView2D);
+    }
+    ImGui::End();
 }
 
 } // namespace ofkitty

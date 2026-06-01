@@ -59,8 +59,11 @@ public:
     TextEditor&       editor() { return m_editor; }
     const TextEditor& editor() const { return m_editor; }
 
-    /// Monospace font for the editor surface (Input Sans is proportional).
-    void setFont(ImFont* font) { m_font = font; }
+    /// Monospace font for the editor surface (JetBrains Mono via ImFonts).
+    void setFont(ImFont* font) {
+        m_font = font;
+        m_editor.SetFont(font);
+    }
 
 private:
     TextEditor  m_editor;

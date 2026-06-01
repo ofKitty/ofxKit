@@ -18,7 +18,7 @@
 //    ImGridGuides g;
 //    g.showGrid = true;
 //    // each frame (in overlayDraw or equivalent):
-//    g.draw(dl, paperW, paperH, vp._ox, vp._oy, vp._zoom,
+//    g.draw(dl, paperW, paperH, vp.view2D.ox, vp.view2D.oy, vp.contentZoom(),
 //           vp.canvasOriginPx().x, vp.canvasOriginPx().y,
 //           vp.canvasW(), vp.canvasH());
 //
@@ -61,6 +61,9 @@ struct ImGridGuides {
     float paperW      = 0.f;
     float paperH      = 0.f;
 
+    /// When true, paper-local Y=0 is the bottom edge (GRBL / Y+ up preview).
+    bool  paperYAxisUp  = false;
+
     // -------------------------------------------------------------------------
     /// Draw all enabled overlays.
     /// @param dl        ImGui draw list (e.g. ImGui::GetWindowDrawList()).
@@ -89,9 +92,12 @@ struct ImGridGuides {
         const float localYmin = std::max(0.f, visYmin - areaOffsetY);
         const float localYmax = std::min(paperH, visYmax - areaOffsetY);
 
-        // Helper: screen coords from paper-local coords
+        // Helper: screen coords from paper-local coords (Y-down content space).
         auto sx = [&](float cx) { return ox + (areaOffsetX + cx) * zoom; };
-        auto sy = [&](float cy) { return oy + (areaOffsetY + cy) * zoom; };
+        auto sy = [&](float cy) {
+            const float localY = paperYAxisUp ? (paperH - cy) : cy;
+            return oy + (areaOffsetY + localY) * zoom;
+        };
 
         // Helper: draw one tier of grid lines
         auto drawGridTier = [&](float step, ImU32 col, float thickness) {
